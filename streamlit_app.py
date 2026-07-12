@@ -1,5 +1,5 @@
 """
-Mauritius Tourism Chatbot - self-contained Streamlit app.
+Mauritius Tourism Chatbot - self-contained Streamlit app (v2).
 Deployable on Streamlit Community Cloud (needs only this file + requirements.txt).
 """
 
@@ -63,9 +63,10 @@ THRESHOLD = 0.15
 
 
 class TourismChatbot:
-    def __init__(self, intents=INTENTS):
+    def __init__(self, intents):
         self.intents = intents
-        self.utterances, self.labels = [], []
+        self.utterances = []
+        self.labels = []
         for name, data in intents.items():
             for ex in data["examples"]:
                 self.utterances.append(ex)
@@ -74,13 +75,23 @@ class TourismChatbot:
         self.matrix = self.vectorizer.fit_transform(self.utterances)
 
     def respond(self, query):
+        query = (query or "").strip()
+        if not query:
+            return FALLBACK
         sims = cosine_similarity(self.vectorizer.transform([query.lower()]),
                                  self.matrix)[0]
-        best = sims.argmax()
+        best = int(sims.argmax())
         if sims[best] < THRESHOLD:
             return FALLBACK
         return self.intents[self.labels[best]]["response"]
 
+
+# ---------------------------------------------------------------- build bot
+@st.cache_resource
+def load_bot():
+    return TourismChatbot(INTENTS)
+
+bot = load_bot()
 
 # ---------------------------------------------------------------- interface
 st.set_page_config(page_title="Mauritius Tourism Chatbot", page_icon="🏝️")
@@ -88,20 +99,27 @@ st.title("🏝️ Mauritius Tourism Chatbot")
 st.caption("Ask about the best time to visit, attractions, transport, "
            "accommodation, currency, weather, food, or language.")
 
-if "bot" not in st.session_state:
-    st.session_state.bot = TourismChatbot()
-if "history" not in st.session_state:
-    st.session_state.history = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-prompt = st.chat_input("Ask me about visiting Mauritius...")
-if prompt:
-    reply = st.session_state.bot.respond(prompt)
-    st.session_state.history.append(("user", prompt))
-    st.session_state.history.append(("assistant", reply))
+# show conversation so far
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
 
-for role, text in st.session_state.history:
-    with st.chat_message(role):
-        st.write(text)
+# handle new input
+user_text = st.chat_input("Ask me about visiting Mauritius...")
+if user_text:
+    # record and show the user's message
+    st.session_state.messages.append({"role": "user", "content": user_text})
+    with st.chat_message("user"):
+        st.write(user_text)
+
+    # compute and show the bot's reply
+    answer = bot.respond(user_text)
+    st.session_state.messages.append({"role": "assistant", "content": answer})
+    with st.chat_message("assistant"):
+        st.write(answer)
 
 with st.sidebar:
     st.subheader("Try asking about:")
