@@ -1,5 +1,5 @@
 """
-Mauritius Tourism Chatbot - self-contained Streamlit app (v2).
+Mauritius Tourism Chatbot - self-contained Streamlit app (v3).
 Deployable on Streamlit Community Cloud (needs only this file + requirements.txt).
 """
 
@@ -86,7 +86,6 @@ class TourismChatbot:
         return self.intents[self.labels[best]]["response"]
 
 
-# ---------------------------------------------------------------- build bot
 @st.cache_resource
 def load_bot():
     return TourismChatbot(INTENTS)
@@ -102,24 +101,17 @@ st.caption("Ask about the best time to visit, attractions, transport, "
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# show conversation so far
+# 1) capture new input FIRST and append to history
+user_text = st.chat_input("Ask me about visiting Mauritius...")
+if user_text:
+    st.session_state.messages.append({"role": "user", "content": user_text})
+    st.session_state.messages.append(
+        {"role": "assistant", "content": bot.respond(user_text)})
+
+# 2) then render the whole conversation ONCE (no duplicate display)
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
-
-# handle new input
-user_text = st.chat_input("Ask me about visiting Mauritius...")
-if user_text:
-    # record and show the user's message
-    st.session_state.messages.append({"role": "user", "content": user_text})
-    with st.chat_message("user"):
-        st.write(user_text)
-
-    # compute and show the bot's reply
-    answer = bot.respond(user_text)
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-    with st.chat_message("assistant"):
-        st.write(answer)
 
 with st.sidebar:
     st.subheader("Try asking about:")
