@@ -1,7 +1,8 @@
 """
-Mauritius Tourism Chatbot - core matching logic (v2).
+Intent-based tourism chatbot prototype (Section 3.6) - v2.
 
-Fixes found by the evaluation (Mauritius_Chatbot_Evaluation_Report.docx):
+Fixes found by the functional evaluation (Section 4, Table 4.4 /
+Mauritius_Chatbot_Evaluation_Report.docx) of the v1 prototype:
   1. "mauritius"/"island" dominated almost every match -> added as domain stopwords.
   2. Vocabulary was only 39 words across 8 topics -> expanded to 34 topics with
      8-10 natural example phrasings each.
@@ -12,6 +13,10 @@ Fixes found by the evaluation (Mauritius_Chatbot_Evaluation_Report.docx):
      AND a minimum margin over the runner-up intent before answering.
   5. Anything still not confident enough no longer just says "please rephrase" -
      the caller (streamlit_app.py) can hand it to an LLM fallback instead.
+
+Run:
+    pip install scikit-learn --break-system-packages
+    python chatbot_core.py
 """
 
 import re
@@ -106,6 +111,7 @@ INTENTS = {
             "where do most tourists stay",
             "what accommodation options are available",
             "is self-catering accommodation available",
+            "can you recommend a good hotel or resort",
         ],
         "response": ("Mauritius offers beach resort hotels, private villas, "
                      "serviced apartments, and guesthouses. Villas and "
@@ -492,6 +498,82 @@ INTENTS = {
                      "before departure rather than relying on older "
                      "information."),
     },
+    "history": {
+        "examples": [
+            "what is the history of mauritius",
+            "how was mauritius colonized",
+            "who discovered mauritius",
+            "when did mauritius gain independence",
+            "was mauritius a british colony",
+            "brief history of mauritius",
+            "tell me about mauritius history",
+        ],
+        "response": ("Mauritius was uninhabited until Arab and Portuguese sailors "
+                     "passed through, then settled by the Dutch in 1638 (who named "
+                     "it after Prince Maurice of Orange), abandoned in 1710, and "
+                     "colonized by the French from 1715 as Isle de France. Britain "
+                     "took control in 1810 and the island reverted to the name "
+                     "Mauritius. It gained independence on 12 March 1968 and "
+                     "became a republic within the Commonwealth in 1992."),
+    },
+    "population": {
+        "examples": [
+            "what is the population of mauritius",
+            "how many people live in mauritius",
+            "how big is the population there",
+            "population of mauritius",
+            "how many people live on the island",
+        ],
+        "response": ("Mauritius has a population of roughly 1.27 million people "
+                     "(2026 estimate), making it one of the more densely "
+                     "populated countries in Africa. The population is "
+                     "multi-ethnic, with Indo-Mauritian, Creole, Sino-Mauritian, "
+                     "and Franco-Mauritian communities."),
+    },
+    "geography": {
+        "examples": [
+            "where is mauritius located",
+            "how big is mauritius",
+            "what continent is mauritius part of",
+            "is mauritius near madagascar",
+            "geography of mauritius",
+            "how far is mauritius from africa",
+        ],
+        "response": ("Mauritius is a volcanic island in the Indian Ocean, about "
+                     "2,000 km off the south-east coast of Africa and roughly "
+                     "900 km east of Madagascar. It covers about 2,040 square "
+                     "kilometers and is part of the Mascarene Islands, along "
+                     "with Reunion and Rodrigues (the latter being part of the "
+                     "Republic of Mauritius)."),
+    },
+    "government": {
+        "examples": [
+            "what type of government does mauritius have",
+            "is mauritius a democracy",
+            "who governs mauritius",
+            "is mauritius a republic",
+            "what is the political system in mauritius",
+        ],
+        "response": ("Mauritius is a parliamentary republic and a member of the "
+                     "Commonwealth, generally regarded as one of Africa's most "
+                     "stable democracies. It has a President as head of state "
+                     "and a Prime Minister who leads the government, with a "
+                     "National Assembly elected by voters."),
+    },
+    "economy": {
+        "examples": [
+            "what is the economy of mauritius based on",
+            "what industries does mauritius have",
+            "how does mauritius make money",
+            "is mauritius a rich country",
+            "what is mauritius known for economically",
+        ],
+        "response": ("Mauritius has a diversified upper-middle to high-income "
+                     "economy built on tourism, textiles and garment "
+                     "manufacturing, sugar production, financial and offshore "
+                     "services, and a growing information and communication "
+                     "technology sector."),
+    },
 }
 
 # Words that appear in almost every example regardless of topic and would
@@ -510,7 +592,7 @@ FALLBACK = ("I'm not fully sure about that one. I can help with topics like "
 # runner-up intent by at least MIN_MARGIN - a single strong, unambiguous hit,
 # not just "the least-bad of 34 options".
 MIN_SCORE = 0.22
-MIN_MARGIN = 0.05
+MIN_MARGIN = 0.04
 
 
 class TourismChatbot:
@@ -595,3 +677,13 @@ class TourismChatbot:
         LLM."""
         dbg = self.respond_debug(query)
         return dbg["response"] if dbg["is_confident"] else FALLBACK
+
+
+if __name__ == "__main__":
+    bot = TourismChatbot()
+    print("Mauritius Tourism Chatbot (v2, offline layer only). Type 'quit' to exit.\n")
+    while True:
+        q = input("You: ").strip()
+        if q.lower() in {"quit", "exit"}:
+            break
+        print("Bot:", bot.respond(q), "\n")
