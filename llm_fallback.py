@@ -115,16 +115,6 @@ def answer(query, history=None):
         joined = "".join(getattr(o, "text", "") or "" for o in outputs)
         text = joined.strip() or (getattr(interaction, "output_text", None) or "").strip()
 
-        # TEMPORARY DIAGNOSTIC - remove once truncation is fixed. Prints to
-        # Streamlit Cloud's log viewer (Manage app -> logs) so we can see
-        # exactly why replies are cutting off instead of guessing again.
-        finish_reason = getattr(interaction, "finish_reason", None) or getattr(interaction, "stop_reason", None)
-        usage = getattr(interaction, "usage", None)
-        print(f"[llm_fallback][DIAGNOSTIC] len(outputs)={len(outputs)} "
-              f"finish_reason={finish_reason!r} usage={usage!r} "
-              f"output_types={[type(o).__name__ for o in outputs]!r} "
-              f"final_text_len={len(text)} final_text={text!r}")
-
         return text if text else None
     except Exception as exc:
         # Any failure (bad key, network issue, rate limit, unexpected
