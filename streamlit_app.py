@@ -1,12 +1,12 @@
 """
-Streamlit web interface for the tourism chatbot - v2, branded "Mauritius Chatbot".
+Streamlit web interface for the tourism chatbot - branded "Mauritius Chatbot".
 Deployable on Streamlit Community Cloud: needs this file, chatbot_core.py,
 llm_fallback.py, and requirements.txt in the same repo/folder.
 
 Two layers:
   1. Offline TF-IDF intent matcher (chatbot_core.py) - instant, free,
      answers confidently-recognised questions from a curated knowledge base
-     of 39 travel/country topics.
+     of 40 travel/country topics.
   2. Gemini fallback (llm_fallback.py) - only used when layer 1 isn't
      confident, so genuinely open-ended or novel questions still get a
      real answer instead of "please rephrase". Requires a GEMINI_API_KEY
