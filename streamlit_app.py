@@ -58,8 +58,8 @@ if prompt:
 for role, text, source in st.session_state.history:
     with st.chat_message(role):
         st.write(text)
-        if source == "ai_assistant":
-            st.caption("🤖 answered by Claude (topic outside the built-in knowledge base)")
+         if source == "ai_assistant":
+            st.caption("🤖 answered by Gemini (topic outside the built-in knowledge base)")
 
 with st.sidebar:
     st.subheader("Try asking about:")
