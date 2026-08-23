@@ -112,8 +112,11 @@ def answer(query, history=None):
         if not text and getattr(interaction, "outputs", None):
             text = interaction.outputs[-1].text
         return text.strip() if text else None
-    except Exception:
+    except Exception as exc:
         # Any failure (bad key, network issue, rate limit, unexpected
         # response shape) degrades gracefully to the offline fallback
-        # instead of crashing the app.
+        # instead of crashing the app. Logged (not raised) so the real
+        # cause is visible in Streamlit Cloud's log viewer (Manage app ->
+        # logs) without breaking the user-facing experience.
+        print(f"[llm_fallback] Gemini call failed: {type(exc).__name__}: {exc}")
         return None
