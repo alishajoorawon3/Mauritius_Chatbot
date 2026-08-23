@@ -16,12 +16,12 @@ to the static offline fallback message instead of crashing.
 """
 
 import os
-from chatbot_prototype import INTENTS
+from chatbot_core import INTENTS
 
 MODEL = "gemini-3.7-flash"
 # Gemini 3.7 Flash spends part of its generation budget on internal
 # "thinking" before writing the visible answer. Give it plenty of room
-# (1024) and keep thinking_level low, since this task - a short, grounded
+# (2048) and keep thinking_level low, since this task - a short, grounded
 # factual answer - doesn't need deep reasoning; without both of these the
 # visible reply can get cut off mid-sentence once the budget runs out.
 MAX_OUTPUT_TOKENS = 2048
