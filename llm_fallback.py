@@ -1,23 +1,25 @@
 """
-LLM fallback layer for the Mauritius Tourism Chatbot.
+LLM fallback layer for the Mauritius Tourism Chatbot - now backed by
+Google's Gemini API (free tier: a Google account is enough, no credit
+card needed for casual/demo-level use).
 
 When the offline TF-IDF matcher (chatbot_core.py) isn't confident it knows
-the topic, this module asks Claude to answer instead, grounded in a curated
+the topic, this module asks Gemini to answer instead, grounded in a curated
 document of Mauritius travel facts (built from the same INTENTS knowledge
 base, plus a few general facts) so it stays on-topic and doesn't invent
 specifics it can't know (e.g. real-time prices or forecasts).
 
-Requires an Anthropic API key, supplied as a Streamlit secret or
-environment variable named ANTHROPIC_API_KEY. If no key is configured, or
-the API call fails for any reason, `answer()` returns None so the caller
-can fall back to the static offline fallback message instead of crashing.
+Requires a Gemini API key, supplied as a Streamlit secret or environment
+variable named GEMINI_API_KEY. If no key is configured, or the API call
+fails for any reason, `answer()` returns None so the caller can fall back
+to the static offline fallback message instead of crashing.
 """
 
 import os
 from chatbot_core import INTENTS
 
-MODEL = "claude-3-5-haiku-latest"
-MAX_TOKENS = 300
+MODEL = "gemini-3.7-flash"
+MAX_OUTPUT_TOKENS = 300
 
 GENERAL_FACTS = """
 Country overview: Mauritius is an island nation in the Indian Ocean, east of
@@ -41,7 +43,7 @@ def _build_facts_document():
 
 FACTS_DOCUMENT = _build_facts_document()
 
-SYSTEM_PROMPT = f"""You are a helpful, friendly assistant for tourists planning a trip to \
+SYSTEM_INSTRUCTION = f"""You are a helpful, friendly assistant for tourists planning a trip to \
 Mauritius, embedded in a small demo chatbot.
 
 Ground your answers in the facts below. You may also use well-established, \
@@ -66,11 +68,11 @@ genuinely needs a short list.
 def _get_api_key():
     try:
         import streamlit as st
-        if "ANTHROPIC_API_KEY" in st.secrets:
-            return st.secrets["ANTHROPIC_API_KEY"]
+        if "GEMINI_API_KEY" in st.secrets:
+            return st.secrets["GEMINI_API_KEY"]
     except Exception:
         pass
-    return os.environ.get("ANTHROPIC_API_KEY")
+    return os.environ.get("GEMINI_API_KEY")
 
 
 def is_available():
@@ -78,26 +80,28 @@ def is_available():
 
 
 def answer(query, history=None):
-    """Returns Claude's answer to `query`, or None if the LLM fallback isn't
-    configured or the call fails. `history` is an optional list of
-    {"role": "user"|"assistant", "content": str} for basic multi-turn
-    context; kept short since this is a lightweight demo."""
+    """Returns Gemini's answer to `query`, or None if the LLM fallback isn't
+    configured or the call fails. `history` is accepted for interface
+    compatibility but this lightweight demo only sends the current
+    question (see SETUP.md for extending this to multi-turn context via
+    previous_interaction_id)."""
     api_key = _get_api_key()
     if not api_key:
         return None
 
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        messages = list(history or [])
-        messages.append({"role": "user", "content": query})
-        resp = client.messages.create(
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        interaction = client.interactions.create(
             model=MODEL,
-            max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=messages,
+            input=query,
+            system_instruction=SYSTEM_INSTRUCTION,
+            generation_config={"max_output_tokens": MAX_OUTPUT_TOKENS, "temperature": 0.4},
         )
-        return resp.content[0].text.strip()
+        text = getattr(interaction, "output_text", None)
+        if not text and getattr(interaction, "outputs", None):
+            text = interaction.outputs[-1].text
+        return text.strip() if text else None
     except Exception:
         # Any failure (bad key, network issue, rate limit, unexpected
         # response shape) degrades gracefully to the offline fallback
