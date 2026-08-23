@@ -1,13 +1,15 @@
 """
-LLM fallback layer for the Mauritius Tourism Chatbot - now backed by
-Google's Gemini API (free tier: a Google account is enough, no credit
-card needed for casual/demo-level use).
+LLM fallback layer for the Mauritius Chatbot - backed by Google's Gemini
+API (free tier: a Google account is enough, no credit card needed for
+casual/demo-level use).
 
 When the offline TF-IDF matcher (chatbot_core.py) isn't confident it knows
-the topic, this module asks Gemini to answer instead, grounded in a curated
-document of Mauritius travel facts (built from the same INTENTS knowledge
-base, plus a few general facts) so it stays on-topic and doesn't invent
-specifics it can't know (e.g. real-time prices or forecasts).
+the topic, this module asks Gemini to answer instead. It's grounded in a
+curated document of Mauritius facts (built from the same INTENTS knowledge
+base) so it stays consistent with the offline layer, but it's also
+instructed to draw on its own general knowledge so it can handle genuinely
+open-ended questions (history, culture, current affairs, "when was the last
+cyclone", etc.), not just the pre-written travel topics.
 
 Requires a Gemini API key, supplied as a Streamlit secret or environment
 variable named GEMINI_API_KEY. If no key is configured, or the API call
@@ -16,7 +18,7 @@ to the static offline fallback message instead of crashing.
 """
 
 import os
-from chatbot_prototype import INTENTS
+from chatbot_core import INTENTS
 
 MODEL = "gemini-3.7-flash"
 # Gemini 3.7 Flash spends part of its generation budget on internal
