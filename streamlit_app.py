@@ -1,12 +1,12 @@
 """
-Mauritius Tourism Chatbot - v2.
+Streamlit web interface for the tourism chatbot - v2, branded "Mauritius AI".
 Deployable on Streamlit Community Cloud: needs this file, chatbot_core.py,
 llm_fallback.py, and requirements.txt in the same repo/folder.
 
 Two layers:
   1. Offline TF-IDF intent matcher (chatbot_core.py) - instant, free,
      answers confidently-recognised questions from a curated knowledge base
-     of 34 travel topics.
+     of 39 travel/country topics.
   2. Gemini fallback (llm_fallback.py) - only used when layer 1 isn't
      confident, so genuinely open-ended or novel questions still get a
      real answer instead of "please rephrase". Requires a GEMINI_API_KEY
@@ -19,10 +19,10 @@ import streamlit as st
 from chatbot_core import TourismChatbot, INTENTS, FALLBACK
 import llm_fallback
 
-st.set_page_config(page_title="Mauritius Tourism Chatbot", page_icon="🏝️")
-st.title("🏝️ Mauritius Tourism Chatbot")
+st.set_page_config(page_title="Mauritius AI", page_icon="🏝️")
+st.title("🏝️ Mauritius AI")
 st.caption("Ask me anything about visiting Mauritius - visas, safety, budget, "
-           "food, weather, honeymoons, diving, and more.")
+           "food, weather, honeymoons, diving, history, and more.")
 
 if "bot" not in st.session_state:
     st.session_state.bot = TourismChatbot()
