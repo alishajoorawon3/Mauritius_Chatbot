@@ -19,7 +19,13 @@ import os
 from chatbot_core import INTENTS
 
 MODEL = "gemini-3.7-flash"
-MAX_OUTPUT_TOKENS = 300
+# Gemini 3.7 Flash spends part of its generation budget on internal
+# "thinking" before writing the visible answer. Give it plenty of room
+# (1024) and keep thinking_level low, since this task - a short, grounded
+# factual answer - doesn't need deep reasoning; without both of these the
+# visible reply can get cut off mid-sentence once the budget runs out.
+MAX_OUTPUT_TOKENS = 1024
+THINKING_LEVEL = "low"
 
 GENERAL_FACTS = """
 Country overview: Mauritius is an island nation in the Indian Ocean, east of
@@ -96,7 +102,11 @@ def answer(query, history=None):
             model=MODEL,
             input=query,
             system_instruction=SYSTEM_INSTRUCTION,
-            generation_config={"max_output_tokens": MAX_OUTPUT_TOKENS, "temperature": 0.4},
+            generation_config={
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
+                "temperature": 0.4,
+                "thinking_level": THINKING_LEVEL,
+            },
         )
         text = getattr(interaction, "output_text", None)
         if not text and getattr(interaction, "outputs", None):
