@@ -1,5 +1,5 @@
 """
-Streamlit web interface for the tourism chatbot - v2, branded "Mauritius AI".
+Streamlit web interface for the tourism chatbot - v2, branded "Mauritius Chatbot".
 Deployable on Streamlit Community Cloud: needs this file, chatbot_core.py,
 llm_fallback.py, and requirements.txt in the same repo/folder.
 
@@ -19,8 +19,8 @@ import streamlit as st
 from chatbot_core import TourismChatbot, INTENTS, FALLBACK
 import llm_fallback
 
-st.set_page_config(page_title="Mauritius AI", page_icon="🏝️")
-st.title("🏝️ Mauritius AI")
+st.set_page_config(page_title="Mauritius Chatbot", page_icon="🏝️")
+st.title("🏝️ Mauritius Chatbot")
 st.caption("Ask me anything about visiting Mauritius - visas, safety, budget, "
            "food, weather, honeymoons, diving, history, and more.")
 
