@@ -1,15 +1,13 @@
 """
-LLM fallback layer for the Mauritius Chatbot - backed by Google's Gemini
-API (free tier: a Google account is enough, no credit card needed for
-casual/demo-level use).
+LLM fallback layer for the Mauritius Tourism Chatbot - now backed by
+Google's Gemini API (free tier: a Google account is enough, no credit
+card needed for casual/demo-level use).
 
 When the offline TF-IDF matcher (chatbot_core.py) isn't confident it knows
-the topic, this module asks Gemini to answer instead. It's grounded in a
-curated document of Mauritius facts (built from the same INTENTS knowledge
-base) so it stays consistent with the offline layer, but it's also
-instructed to draw on its own general knowledge so it can handle genuinely
-open-ended questions (history, culture, current affairs, "when was the last
-cyclone", etc.), not just the pre-written travel topics.
+the topic, this module asks Gemini to answer instead, grounded in a curated
+document of Mauritius travel facts (built from the same INTENTS knowledge
+base, plus a few general facts) so it stays on-topic and doesn't invent
+specifics it can't know (e.g. real-time prices or forecasts).
 
 Requires a Gemini API key, supplied as a Streamlit secret or environment
 variable named GEMINI_API_KEY. If no key is configured, or the API call
@@ -18,15 +16,19 @@ to the static offline fallback message instead of crashing.
 """
 
 import os
-from chatbot_core import INTENTS
+from chatbot_prototype import INTENTS
 
 MODEL = "gemini-3.7-flash"
 # Gemini 3.7 Flash spends part of its generation budget on internal
 # "thinking" before writing the visible answer. Give it plenty of room
-# (2048) and keep thinking_level low, since this task - a short, grounded
-# factual answer - doesn't need deep reasoning; without both of these the
-# visible reply can get cut off mid-sentence once the budget runs out.
-MAX_OUTPUT_TOKENS = 2048
+# and keep thinking_level low, since this task - a short, grounded factual
+# answer - doesn't need deep reasoning; without both of these the visible
+# reply can get cut off mid-sentence (or come back empty) once the budget
+# runs out. Raised from 2048 after the broader "answer almost anything"
+# system instruction made some genuinely open-ended questions come back
+# with empty text - the extra instructions plus a longer, more effortful
+# answer apparently pushed a few responses right up against the old limit.
+MAX_OUTPUT_TOKENS = 3072
 THINKING_LEVEL = "low"
 
 GENERAL_FACTS = """
@@ -125,6 +127,21 @@ def answer(query, history=None):
         # taking only outputs[-1] could silently drop earlier text content.
         joined = "".join(getattr(o, "text", "") or "" for o in outputs)
         text = joined.strip() or (getattr(interaction, "output_text", None) or "").strip()
+
+        if not text:
+            # A successful call with empty visible text (no exception raised)
+            # is a distinct failure mode from a crash - usually the token
+            # budget ran out during "thinking" before any visible text was
+            # written, or the response was blocked/filtered. Log the details
+            # so this is visible in Streamlit Cloud's log viewer (Manage
+            # app -> logs) instead of silently degrading to the generic
+            # offline fallback message with no clue why.
+            finish_reason = getattr(interaction, "finish_reason", None) or getattr(interaction, "stop_reason", None)
+            usage = getattr(interaction, "usage", None)
+            print(f"[llm_fallback] Empty response for query={query!r}: "
+                  f"len(outputs)={len(outputs)} finish_reason={finish_reason!r} "
+                  f"usage={usage!r} "
+                  f"output_types={[type(o).__name__ for o in outputs]!r}")
 
         return text if text else None
     except Exception as exc:
