@@ -7,9 +7,9 @@ Two layers:
   1. Offline TF-IDF intent matcher (chatbot_core.py) - instant, free,
      answers confidently-recognised questions from a curated knowledge base
      of 34 travel topics.
-  2. Claude fallback (llm_fallback.py) - only used when layer 1 isn't
+  2. Gemini fallback (llm_fallback.py) - only used when layer 1 isn't
      confident, so genuinely open-ended or novel questions still get a
-     real answer instead of "please rephrase". Requires an ANTHROPIC_API_KEY
+     real answer instead of "please rephrase". Requires a GEMINI_API_KEY
      Streamlit secret; the app still works with layer 1 alone if it's absent.
 
 See SETUP.md for how to add the API key.
@@ -58,7 +58,7 @@ if prompt:
 for role, text, source in st.session_state.history:
     with st.chat_message(role):
         st.write(text)
-         if source == "ai_assistant":
+        if source == "ai_assistant":
             st.caption("🤖 answered by Gemini (topic outside the built-in knowledge base)")
 
 with st.sidebar:
@@ -83,7 +83,7 @@ with st.sidebar:
 
     st.divider()
     if not llm_on:
-        st.warning("AI fallback is off - no ANTHROPIC_API_KEY configured. "
+        st.warning("AI fallback is off - no GEMINI_API_KEY configured. "
                     "See SETUP.md to enable it.", icon="⚠️")
     st.caption("Prototype built for a BSc dissertation on tourism analytics "
                "and conversational AI for Mauritius.")
