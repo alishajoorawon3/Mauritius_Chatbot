@@ -36,7 +36,7 @@ if "bot" not in st.session_state:
 if "history" not in st.session_state:
     st.session_state.history = []
 if "stats" not in st.session_state:
-    st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "unanswered": 0}
+    st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "rate_limited": 0, "unanswered": 0}
 if "ai_thread_id" not in st.session_state:
     st.session_state.ai_thread_id = None
 
@@ -52,7 +52,10 @@ if prompt:
         llm_reply, new_thread_id = llm_fallback.answer(
             prompt, previous_interaction_id=st.session_state.ai_thread_id
         )
-        if llm_reply:
+        if llm_reply == llm_fallback.RATE_LIMIT_MESSAGE:
+            reply = llm_reply
+            source = "rate_limited"
+        elif llm_reply:
             reply = llm_reply
             source = "ai_assistant"
             st.session_state.ai_thread_id = new_thread_id
@@ -72,6 +75,8 @@ for role, text, source in st.session_state.history:
         st.write(text)
         if source == "ai_assistant":
             st.caption("🤖 answered by Gemini (topic outside the built-in knowledge base)")
+        elif source == "rate_limited":
+            st.caption("⏳ AI layer temporarily rate-limited - try again shortly")
 
 with st.sidebar:
     st.subheader("Try asking about:")
@@ -89,6 +94,7 @@ with st.sidebar:
     if total:
         st.metric("Answered from knowledge base", st.session_state.stats["knowledge_base"])
         st.metric("Answered by AI fallback", st.session_state.stats["ai_assistant"])
+        st.metric("Rate-limited", st.session_state.stats["rate_limited"])
         st.metric("Unanswered", st.session_state.stats["unanswered"])
     else:
         st.caption("Ask a question to see stats here.")
@@ -97,7 +103,7 @@ with st.sidebar:
     if st.button("🔄 Start a new conversation"):
         st.session_state.history = []
         st.session_state.ai_thread_id = None
-        st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "unanswered": 0}
+        st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "rate_limited": 0, "unanswered": 0}
         st.rerun()
     st.caption("Clears the chat and the AI's memory of what you've discussed "
                "so far - use this if you want to switch topics with a clean "
