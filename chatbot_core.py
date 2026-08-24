@@ -668,7 +668,7 @@ class TourismChatbot:
             if stem in self.vocab:
                 corrected.append(w)
                 continue
-            match = difflib.get_close_matches(stem, self._stem_vocab, n=1, cutoff=0.84)
+            match = difflib.get_close_matches(stem, self._stem_vocab, n=1, cutoff=0.90)
             if match and abs(len(match[0]) - len(stem)) <= 2:
                 corrected.append(match[0])
             else:
