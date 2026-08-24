@@ -12,6 +12,13 @@ Two layers:
      real answer instead of "please rephrase". Requires a GEMINI_API_KEY
      Streamlit secret; the app still works with layer 1 alone if it's absent.
 
+Conversation memory: st.session_state.ai_thread_id tracks the most recent
+Gemini interaction id so follow-up questions ("what about for families?")
+are understood in context instead of answered from a blank slate each time.
+Only AI-answered turns extend the thread - a question caught by the offline
+matcher in between doesn't get added to Gemini's memory of the conversation,
+since it never talks to Gemini at all (see llm_fallback.py's docstring).
+
 See SETUP.md for how to add the API key.
 """
 
@@ -30,6 +37,8 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "stats" not in st.session_state:
     st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "unanswered": 0}
+if "ai_thread_id" not in st.session_state:
+    st.session_state.ai_thread_id = None
 
 llm_on = llm_fallback.is_available()
 
@@ -40,10 +49,13 @@ if prompt:
         reply = dbg["response"]
         source = "knowledge_base"
     elif llm_on:
-        llm_reply = llm_fallback.answer(prompt)
+        llm_reply, new_thread_id = llm_fallback.answer(
+            prompt, previous_interaction_id=st.session_state.ai_thread_id
+        )
         if llm_reply:
             reply = llm_reply
             source = "ai_assistant"
+            st.session_state.ai_thread_id = new_thread_id
         else:
             reply = FALLBACK
             source = "unanswered"
@@ -80,6 +92,16 @@ with st.sidebar:
         st.metric("Unanswered", st.session_state.stats["unanswered"])
     else:
         st.caption("Ask a question to see stats here.")
+
+    st.divider()
+    if st.button("🔄 Start a new conversation"):
+        st.session_state.history = []
+        st.session_state.ai_thread_id = None
+        st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "unanswered": 0}
+        st.rerun()
+    st.caption("Clears the chat and the AI's memory of what you've discussed "
+               "so far - use this if you want to switch topics with a clean "
+               "slate.")
 
     st.divider()
     if not llm_on:
