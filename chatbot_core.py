@@ -610,7 +610,10 @@ INTENTS = {
 # otherwise dominate the similarity score (this was the main bug found in
 # the evaluation: "mauritius" alone caused near-random, over-confident
 # matches). These are removed on top of the standard English stop words.
-DOMAIN_STOPWORDS = {"mauritius", "mauritian", "mauritians", "island", "here", "there"}
+DOMAIN_STOPWORDS = {
+    "mauritius", "mauritian", "mauritians", "island", "here", "there",
+    "tell", "know", "want", "explain",
+}
 STOPWORDS = list(sk_text.ENGLISH_STOP_WORDS.union(DOMAIN_STOPWORDS))
 
 FALLBACK = ("I'm not fully sure about that one. I can help with topics like "
