@@ -4,17 +4,26 @@ API (free tier: a Google account is enough, no credit card needed for
 casual/demo-level use).
 
 When the offline TF-IDF matcher (chatbot_core.py) isn't confident it knows
-the topic, this module asks Gemini to answer instead. It's grounded in a
-curated document of Mauritius facts (built from the same INTENTS knowledge
-base) so it stays consistent with the offline layer, but it's also
-instructed to draw on its own general knowledge so it can handle genuinely
-open-ended questions (history, culture, current affairs, "when was the last
-cyclone", etc.), not just the pre-written travel topics.
+the topic, this module asks Gemini to answer instead, grounded in a curated
+document of Mauritius facts (built from the same INTENTS knowledge base) so
+it stays consistent with the offline layer.
+
+Multi-turn memory: Gemini's Interactions API supports chaining follow-up
+questions onto a previous exchange via `previous_interaction_id`, so a
+question like "what about for families?" can be understood as a follow-up
+to whatever was just discussed, instead of being answered from scratch with
+no context. The caller (streamlit_app.py) is responsible for remembering
+the most recent interaction id (in st.session_state) and passing it back in
+on the next call - this module doesn't persist anything itself. Note this
+only threads together turns that actually reach the AI layer; a question
+answered by the offline matcher in between doesn't get added to the AI's
+memory, since it never talks to Gemini at all - a known limitation of the
+hybrid architecture, worth a mention in a limitations section.
 
 Requires a Gemini API key, supplied as a Streamlit secret or environment
 variable named GEMINI_API_KEY. If no key is configured, or the API call
-fails for any reason, `answer()` returns None so the caller can fall back
-to the static offline fallback message instead of crashing.
+fails for any reason, `answer()` returns (None, None) so the caller can
+fall back to the static offline fallback message instead of crashing.
 """
 
 import os
@@ -100,57 +109,81 @@ def is_available():
     return bool(_get_api_key())
 
 
-def answer(query, history=None):
-    """Returns Gemini's answer to `query`, or None if the LLM fallback isn't
-    configured or the call fails. `history` is accepted for interface
-    compatibility but this lightweight demo only sends the current
-    question (see SETUP.md for extending this to multi-turn context via
-    previous_interaction_id)."""
+def _call_gemini(query, api_key, previous_interaction_id):
+    from google import genai
+    client = genai.Client(api_key=api_key)
+    interaction = client.interactions.create(
+        model=MODEL,
+        input=query,
+        system_instruction=SYSTEM_INSTRUCTION,
+        previous_interaction_id=previous_interaction_id,
+        generation_config={
+            "max_output_tokens": MAX_OUTPUT_TOKENS,
+            "temperature": 0.4,
+            "thinking_level": THINKING_LEVEL,
+        },
+    )
+    outputs = getattr(interaction, "outputs", None) or []
+    # Concatenate every text-bearing output block rather than just the
+    # last one - if the model returns thinking/text as separate blocks,
+    # taking only outputs[-1] could silently drop earlier text content.
+    joined = "".join(getattr(o, "text", "") or "" for o in outputs)
+    text = joined.strip() or (getattr(interaction, "output_text", None) or "").strip()
+    interaction_id = getattr(interaction, "id", None)
+
+    if not text:
+        # A successful call with empty visible text (no exception raised)
+        # is a distinct failure mode from a crash - usually the token
+        # budget ran out during "thinking" before any visible text was
+        # written, or the response was blocked/filtered. Log the details
+        # so this is visible in Streamlit Cloud's log viewer (Manage
+        # app -> logs) instead of silently degrading to the generic
+        # offline fallback message with no clue why.
+        finish_reason = getattr(interaction, "finish_reason", None) or getattr(interaction, "stop_reason", None)
+        usage = getattr(interaction, "usage", None)
+        print(f"[llm_fallback] Empty response for query={query!r}: "
+              f"len(outputs)={len(outputs)} finish_reason={finish_reason!r} "
+              f"usage={usage!r} "
+              f"output_types={[type(o).__name__ for o in outputs]!r}")
+
+    return (text, interaction_id) if text else (None, None)
+
+
+def answer(query, previous_interaction_id=None):
+    """Returns (text, interaction_id). `text` is None if the LLM fallback
+    isn't configured or the call fails - the caller should show the static
+    offline fallback message in that case. `interaction_id` is the id of
+    this exchange on Gemini's side; pass it back in as
+    `previous_interaction_id` on the *next* call (from the same
+    conversation) so Gemini remembers what was just discussed and can
+    handle follow-up questions naturally. Pass None for a fresh
+    conversation with no prior context."""
     api_key = _get_api_key()
     if not api_key:
-        return None
+        return (None, None)
 
     try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        interaction = client.interactions.create(
-            model=MODEL,
-            input=query,
-            system_instruction=SYSTEM_INSTRUCTION,
-            generation_config={
-                "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "temperature": 0.4,
-                "thinking_level": THINKING_LEVEL,
-            },
-        )
-        outputs = getattr(interaction, "outputs", None) or []
-        # Concatenate every text-bearing output block rather than just the
-        # last one - if the model returns thinking/text as separate blocks,
-        # taking only outputs[-1] could silently drop earlier text content.
-        joined = "".join(getattr(o, "text", "") or "" for o in outputs)
-        text = joined.strip() or (getattr(interaction, "output_text", None) or "").strip()
-
-        if not text:
-            # A successful call with empty visible text (no exception raised)
-            # is a distinct failure mode from a crash - usually the token
-            # budget ran out during "thinking" before any visible text was
-            # written, or the response was blocked/filtered. Log the details
-            # so this is visible in Streamlit Cloud's log viewer (Manage
-            # app -> logs) instead of silently degrading to the generic
-            # offline fallback message with no clue why.
-            finish_reason = getattr(interaction, "finish_reason", None) or getattr(interaction, "stop_reason", None)
-            usage = getattr(interaction, "usage", None)
-            print(f"[llm_fallback] Empty response for query={query!r}: "
-                  f"len(outputs)={len(outputs)} finish_reason={finish_reason!r} "
-                  f"usage={usage!r} "
-                  f"output_types={[type(o).__name__ for o in outputs]!r}")
-
-        return text if text else None
+        return _call_gemini(query, api_key, previous_interaction_id)
     except Exception as exc:
+        # If we were continuing a thread and it failed, the thread id itself
+        # might be stale/invalid (expired, or from a session that no longer
+        # exists on Gemini's side) - retry once as a fresh conversation
+        # rather than let one bad id permanently break every future turn.
+        if previous_interaction_id is not None:
+            print(f"[llm_fallback] Gemini call failed with previous_interaction_id="
+                  f"{previous_interaction_id!r} ({type(exc).__name__}: {exc}); "
+                  f"retrying as a fresh conversation.")
+            try:
+                return _call_gemini(query, api_key, None)
+            except Exception as exc2:
+                print(f"[llm_fallback] Retry without thread also failed: "
+                      f"{type(exc2).__name__}: {exc2}")
+                return (None, None)
+
         # Any failure (bad key, network issue, rate limit, unexpected
         # response shape) degrades gracefully to the offline fallback
         # instead of crashing the app. Logged (not raised) so the real
         # cause is visible in Streamlit Cloud's log viewer (Manage app ->
         # logs) without breaking the user-facing experience.
         print(f"[llm_fallback] Gemini call failed: {type(exc).__name__}: {exc}")
-        return None
+        return (None, None)
