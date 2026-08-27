@@ -853,6 +853,31 @@ INTENTS = {
             "during cyclone season."
         ),
     },
+
+    "itinerary": {
+    "examples": [
+        "create an itinerary for my trip to mauritius",
+        "plan my holiday in mauritius",
+        "create a 5 day itinerary",
+        "create a 7 day itinerary",
+        "what should i do each day in mauritius",
+        "plan a family trip to mauritius",
+        "can you create a personalised itinerary",
+        "make me a travel itinerary",
+        "i am travelling to mauritius for five days",
+        "what can i do in mauritius for five days",
+        "plan a trip based on my interests",
+        "create a customised holiday plan"
+    ],
+    "response": (
+        "I can create a personalised Mauritius itinerary based on your "
+        "trip length, interests, budget and whether you are travelling "
+        "alone, as a couple, with friends or with family. For example, "
+        "for a 5-day family trip focused on nature, food and beaches, "
+        "I would recommend combining the west, south-west, north and "
+        "east of the island rather than staying in one area."
+    ),
+},
 }
 
 
