@@ -25,9 +25,7 @@ Required Streamlit Secret:
 
 import streamlit as st
 
-from chatbot_prototype import TourismChatbot, INTENTS, FALLBACK
-import llm_fallback
-
+from chatbot_core import TourismChatbot, INTENTS, FALLBACK
 
 # =========================================================
 # PAGE CONFIGURATION
