@@ -1,61 +1,69 @@
 """
-Intent-based tourism chatbot prototype - v2.
+Mauritius Tourism Chatbot Core
+------------------------------
+Hybrid intent-based tourism chatbot.
 
-Fixes found by the functional evaluation (Table 4.4 / Mauritius_Chatbot_
-Evaluation_Report.docx) of the v1 prototype:
-  1. "mauritius"/"island" dominated almost every match -> added as domain stopwords.
-  2. Vocabulary was only 39 words across 8 topics -> expanded to 34 topics with
-     8-10 natural example phrasings each.
-  3. A single typo (e.g. "atractions") produced either a wrong confident match or
-     an accidental fallback -> added fuzzy correction against the fitted vocabulary.
-  4. A lone top score was trusted even when meaningless -> now aggregates by
-     intent (max over that intent's examples) and requires both a minimum score
-     AND a minimum margin over the runner-up intent before answering.
-  5. Anything still not confident enough no longer just says "please rephrase" -
-     the caller (streamlit_app.py) can hand it to an LLM fallback instead.
-  6. A dedicated "recent_cyclones" topic was added after a real question ("when
-     was the last cyclone in Mauritius?") was wrongly matched to the general
-     "weather" topic, since "cyclone" appears in both - the fix keeps it as
-     its own topic with an explicit, dated, honestly-caveated answer instead
-     of a generic climate description.
+Features:
+1. TF-IDF local tourism knowledge base
+2. 30+ tourism intents
+3. Fuzzy typo correction
+4. Intent confidence + margin checking
+5. Dedicated beach intent
+6. Complex/personalised-question detection
+7. Gemini fallback handled by streamlit_app.py / llm_fallback.py
 
-Run:
-    pip install scikit-learn --break-system-packages
-    python chatbot_core.py
+The local layer answers common tourism questions quickly.
+Complex, personalised and multi-step questions are passed to Gemini.
 """
 
 import re
 import difflib
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction import text as sk_text
 from sklearn.metrics.pairwise import cosine_similarity
+
+
+# ============================================================
+# TOKENISATION
+# ============================================================
 
 _TOKEN_RE = re.compile(r"[a-zA-Z]{2,}")
 
 
 def simple_stem(word):
-    """Tiny dependency-free stemmer (no nltk download needed) so that
-    'attractions'/'attraction', 'hotels'/'hotel', 'activities'/'activity'
-    etc. collapse to the same vocabulary entry instead of being treated as
-    unrelated, unknown words."""
+    """Small dependency-free stemmer."""
+
     if word.endswith("ies") and len(word) > 4:
         return word[:-3] + "y"
+
     if word.endswith("es") and len(word) > 4:
         return word[:-2]
+
     if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
         return word[:-1]
+
     if word.endswith("ing") and len(word) > 6:
         return word[:-3]
+
     return word
 
 
 def _tokenize(text_):
     return _TOKEN_RE.findall(text_.lower())
 
-# ---------------------------------------------------------------- intents
-# Each intent: a handful of natural example phrasings + one canonical answer.
+
+# ============================================================
+# TOURISM INTENTS
+# ============================================================
+
 INTENTS = {
-      "beaches": {
+
+    # --------------------------------------------------------
+    # BEACHES
+    # --------------------------------------------------------
+
+    "beaches": {
         "examples": [
             "what are the best beaches in mauritius",
             "best beaches in mauritius",
@@ -68,6 +76,8 @@ INTENTS = {
             "where can i find beautiful beaches",
             "which beaches are worth visiting",
             "top beaches to visit",
+            "where are the best beaches",
+            "recommend beaches in mauritius",
         ],
         "response": (
             "Mauritius has many beautiful beaches, each with a different "
@@ -79,7 +89,11 @@ INTENTS = {
             "and south-east coasts."
         ),
     },
-  
+
+    # --------------------------------------------------------
+    # BEST TIME
+    # --------------------------------------------------------
+
     "best_time_to_visit": {
         "examples": [
             "when is the best time to visit mauritius",
@@ -91,10 +105,17 @@ INTENTS = {
             "is december a good month to visit",
             "what's the ideal time of year to travel here",
         ],
-        "response": ("Mauritius is warm year-round. The driest, sunniest months "
-                     "are May to December; January to March is hotter and more "
-                     "humid, and is the main cyclone season."),
+        "response": (
+            "Mauritius is warm year-round. The driest, sunniest months are "
+            "May to December; January to March is hotter and more humid, "
+            "and is the main cyclone season."
+        ),
     },
+
+    # --------------------------------------------------------
+    # ATTRACTIONS
+    # --------------------------------------------------------
+
     "attractions": {
         "examples": [
             "what are the best attractions in mauritius",
@@ -106,11 +127,18 @@ INTENTS = {
             "recommend some must-visit spots",
             "where can i go sightseeing",
         ],
-        "response": ("Popular attractions include Le Morne Brabant, Chamarel Seven "
-                     "Coloured Earths, Black River Gorges National Park, Ile aux "
-                     "Cerfs, and the capital Port Louis with its waterfront and "
-                     "Central Market."),
+        "response": (
+            "Popular attractions include Le Morne Brabant, Chamarel Seven "
+            "Coloured Earths, Black River Gorges National Park, Ile aux "
+            "Cerfs, and the capital Port Louis with its waterfront and "
+            "Central Market."
+        ),
     },
+
+    # --------------------------------------------------------
+    # TRANSPORT
+    # --------------------------------------------------------
+
     "transport": {
         "examples": [
             "how do i get around mauritius",
@@ -124,11 +152,18 @@ INTENTS = {
             "what transportation options are available",
             "how does the bus and taxi system work",
         ],
-        "response": ("Getting around is usually by rental car, taxi, or the public "
-                     "bus network, which covers most of the island cheaply but can "
-                     "be slow. Ride-hailing apps have limited coverage compared to "
-                     "taxis and hotel transfers."),
+        "response": (
+            "Getting around is usually by rental car, taxi, or the public "
+            "bus network, which covers most of the island cheaply but can "
+            "be slow. Ride-hailing apps have limited coverage compared to "
+            "taxis and hotel transfers."
+        ),
     },
+
+    # --------------------------------------------------------
+    # ACCOMMODATION
+    # --------------------------------------------------------
+
     "accommodation": {
         "examples": [
             "where should i stay in mauritius",
@@ -143,11 +178,17 @@ INTENTS = {
             "is self-catering accommodation available",
             "can you recommend a good hotel or resort",
         ],
-        "response": ("Mauritius offers beach resort hotels, private villas, "
-                     "serviced apartments, and guesthouses. Villas and "
-                     "guesthouses have grown a lot in recent years as an "
-                     "alternative to the big resorts."),
+        "response": (
+            "Mauritius offers beach resort hotels, private villas, "
+            "serviced apartments, and guesthouses. Villas and guesthouses "
+            "are popular alternatives to large resorts."
+        ),
     },
+
+    # --------------------------------------------------------
+    # CURRENCY
+    # --------------------------------------------------------
+
     "currency": {
         "examples": [
             "what currency is used in mauritius",
@@ -159,11 +200,18 @@ INTENTS = {
             "where can i exchange money",
             "is it a cash-based economy",
         ],
-        "response": ("The local currency is the Mauritian Rupee (MUR). Major "
-                     "hotels and larger shops often accept euros, US dollars, or "
-                     "cards, but carry some local currency for taxis, markets, "
-                     "and smaller vendors."),
+        "response": (
+            "The local currency is the Mauritian Rupee (MUR). Major hotels "
+            "and larger shops often accept cards and sometimes major foreign "
+            "currencies, but carrying some local currency is useful for taxis, "
+            "markets and smaller vendors."
+        ),
     },
+
+    # --------------------------------------------------------
+    # WEATHER
+    # --------------------------------------------------------
+
     "weather": {
         "examples": [
             "what is the weather like in mauritius",
@@ -175,10 +223,17 @@ INTENTS = {
             "is it humid",
             "when is cyclone season",
         ],
-        "response": ("Mauritius has a tropical climate: warm and relatively dry "
-                     "from May to December, hotter, more humid, and wetter from "
-                     "January to March, which is also cyclone season."),
+        "response": (
+            "Mauritius has a tropical climate. The period from May to "
+            "December is generally drier, while January to March is hotter, "
+            "more humid and wetter, and is also the main cyclone period."
+        ),
     },
+
+    # --------------------------------------------------------
+    # FOOD
+    # --------------------------------------------------------
+
     "food": {
         "examples": [
             "what food should i try in mauritius",
@@ -190,10 +245,17 @@ INTENTS = {
             "is mauritian food spicy",
             "what should i eat while i'm there",
         ],
-        "response": ("Mauritian cuisine blends Indian, Creole, Chinese, and French "
-                     "influences - try dholl puri, rougaille, and biryani, along "
-                     "with fresh seafood along the coast."),
+        "response": (
+            "Mauritian cuisine blends Indian, Creole, Chinese and French "
+            "influences. Try dholl puri, rougaille and biryani, along with "
+            "fresh seafood and local street food."
+        ),
     },
+
+    # --------------------------------------------------------
+    # LANGUAGE
+    # --------------------------------------------------------
+
     "language": {
         "examples": [
             "what language is spoken in mauritius",
@@ -204,11 +266,17 @@ INTENTS = {
             "do mauritians speak creole",
             "what's the main language on the island",
         ],
-        "response": ("English is the official language and is used in schools, "
-                     "government, and most tourism settings. French is also "
-                     "widely spoken, and Mauritian Creole is the language most "
-                     "people use day to day."),
+        "response": (
+            "English is widely used in government, education and tourism. "
+            "French is also widely spoken, while Mauritian Creole is the "
+            "language most commonly used in everyday conversation."
+        ),
     },
+
+    # --------------------------------------------------------
+    # VISA
+    # --------------------------------------------------------
+
     "visa": {
         "examples": [
             "do i need a visa to visit mauritius",
@@ -219,13 +287,18 @@ INTENTS = {
             "what documents do i need to enter mauritius",
             "is a passport enough to enter mauritius",
         ],
-        "response": ("Many nationalities can enter Mauritius visa-free for tourism "
-                     "for a limited period (commonly up to 60 days), with a valid "
-                     "passport, proof of onward travel, and accommodation details. "
-                     "Requirements vary by nationality and change over time, so "
-                     "always confirm with the nearest Mauritian embassy or the "
-                     "official passport and immigration office before you fly."),
+        "response": (
+            "Visa requirements depend on nationality and the purpose and "
+            "length of the visit. Travellers should check the latest official "
+            "Mauritian immigration guidance before travelling, as requirements "
+            "can change."
+        ),
     },
+
+    # --------------------------------------------------------
+    # SAFETY
+    # --------------------------------------------------------
+
     "safety": {
         "examples": [
             "is mauritius safe for tourists",
@@ -235,11 +308,17 @@ INTENTS = {
             "should i be worried about safety",
             "any safety tips for visiting mauritius",
         ],
-        "response": ("Mauritius is generally considered safe for tourists, with "
-                     "low rates of violent crime. As anywhere, use normal "
-                     "precautions with valuables on beaches, at night, and in "
-                     "crowded areas, and use registered taxis where possible."),
+        "response": (
+            "Mauritius is generally considered a safe destination for "
+            "tourists. As anywhere, use normal precautions with valuables, "
+            "particularly on beaches, at night and in crowded areas."
+        ),
     },
+
+    # --------------------------------------------------------
+    # TIPPING
+    # --------------------------------------------------------
+
     "tipping": {
         "examples": [
             "do you tip in mauritius",
@@ -248,11 +327,17 @@ INTENTS = {
             "do i need to tip taxi drivers",
             "is a service charge included at restaurants",
         ],
-        "response": ("Tipping isn't obligatory, but it's appreciated. Many hotels "
-                     "and restaurants add a service charge already; if not, "
-                     "around 10% for good service, and small tips for drivers, "
-                     "porters, or tour guides, are common."),
+        "response": (
+            "Tipping is not obligatory but is appreciated. Some hotels and "
+            "restaurants already include a service charge. A small tip for "
+            "good service is generally appropriate."
+        ),
     },
+
+    # --------------------------------------------------------
+    # CONNECTIVITY
+    # --------------------------------------------------------
+
     "connectivity": {
         "examples": [
             "where can i buy a sim card in mauritius",
@@ -262,12 +347,18 @@ INTENTS = {
             "can i use mobile data in mauritius",
             "is there roaming coverage in mauritius",
         ],
-        "response": ("Local prepaid SIM cards are available cheaply at the "
-                     "airport and in town from the main network operators, and "
-                     "most hotels, resorts, and cafes offer free Wi-Fi. Check "
-                     "with your home carrier about international roaming rates "
-                     "before you rely on that instead."),
+        "response": (
+            "Local prepaid SIM cards are available at the airport and in "
+            "towns. Most hotels, resorts and many cafes also offer Wi-Fi. "
+            "Check roaming charges with your home mobile provider before "
+            "travelling."
+        ),
     },
+
+    # --------------------------------------------------------
+    # BUDGET
+    # --------------------------------------------------------
+
     "budget": {
         "examples": [
             "how much does a week in mauritius cost",
@@ -276,12 +367,17 @@ INTENTS = {
             "is mauritius cheap or expensive",
             "how much money should i bring",
         ],
-        "response": ("Costs vary widely: budget guesthouses and street food can "
-                     "make for an affordable trip, while all-inclusive beach "
-                     "resorts and imported goods push costs up quickly. "
-                     "Mid-range travellers typically budget more than they would "
-                     "for similar trips in mainland Africa or South Asia."),
+        "response": (
+            "Costs vary considerably. Budget guesthouses and local food can "
+            "make a trip relatively affordable, while luxury resorts, "
+            "activities and imported goods can increase costs considerably."
+        ),
     },
+
+    # --------------------------------------------------------
+    # ELECTRICITY
+    # --------------------------------------------------------
+
     "electricity": {
         "examples": [
             "what plug type is used in mauritius",
@@ -289,11 +385,17 @@ INTENTS = {
             "do i need an adapter for mauritius",
             "what socket type is used there",
         ],
-        "response": ("Mauritius uses UK-style Type G three-pin sockets at 230V, "
-                     "50Hz. Visitors from countries with different plug types or "
-                     "voltages will need a travel adapter (and a converter for "
-                     "devices not rated for 230V)."),
+        "response": (
+            "Mauritius generally uses UK-style Type G three-pin sockets at "
+            "230V and 50Hz. Visitors with different plug types may need a "
+            "travel adapter."
+        ),
     },
+
+    # --------------------------------------------------------
+    # HEALTH
+    # --------------------------------------------------------
+
     "health": {
         "examples": [
             "do i need vaccinations to travel to mauritius",
@@ -302,27 +404,38 @@ INTENTS = {
             "do i need travel insurance for mauritius",
             "what medical facilities are available there",
         ],
-        "response": ("No special vaccinations are required for most travellers, "
-                     "though routine vaccinations should be up to date, and a "
-                     "yellow fever certificate may be required if arriving from "
-                     "a country with risk of transmission. Mauritius is "
-                     "malaria-free. Private clinics and hospitals are available "
-                     "for tourists; travel insurance covering medical care is "
-                     "recommended."),
+        "response": (
+            "Travellers should ensure routine vaccinations are up to date "
+            "and check current health guidance before travelling. Mauritius "
+            "has medical facilities available for tourists, and travel "
+            "insurance covering medical care is recommended."
+        ),
     },
+
+    # --------------------------------------------------------
+    # DIVING / SNORKELLING
+    # --------------------------------------------------------
+
     "diving_snorkeling": {
         "examples": [
             "where's the best place to go scuba diving in mauritius",
             "is snorkeling good in mauritius",
             "best dive sites in mauritius",
             "can beginners try diving in mauritius",
+            "where can i go snorkelling",
         ],
-        "response": ("Mauritius has good diving and snorkeling around its "
-                     "lagoons and reefs, with popular spots near Flic en Flac, "
-                     "Blue Bay Marine Park, and the north coast. Dive centres "
-                     "offer trips and courses for both beginners and "
-                     "experienced divers."),
+        "response": (
+            "Mauritius has good diving and snorkelling around its lagoons "
+            "and reefs. Popular areas include Flic en Flac, Blue Bay Marine "
+            "Park and parts of the north coast. Dive centres offer trips "
+            "and courses for beginners and experienced divers."
+        ),
     },
+
+    # --------------------------------------------------------
+    # HONEYMOON
+    # --------------------------------------------------------
+
     "honeymoon": {
         "examples": [
             "is mauritius good for honeymoons",
@@ -330,24 +443,37 @@ INTENTS = {
             "best honeymoon resorts in mauritius",
             "is mauritius a good place for a romantic getaway",
         ],
-        "response": ("Mauritius is a popular honeymoon destination, with many "
-                     "resorts offering couples' packages, private beach "
-                     "dinners, and adults-only sections. Areas like Belle Mare, "
-                     "Trou aux Biches, and the south-west coast are especially "
-                     "popular for honeymooners."),
+        "response": (
+            "Mauritius is a popular honeymoon destination, with resorts "
+            "offering couples' packages, private dinners and romantic "
+            "experiences. Belle Mare, Trou aux Biches and the south-west "
+            "coast are popular areas for couples."
+        ),
     },
+
+    # --------------------------------------------------------
+    # FAMILY
+    # --------------------------------------------------------
+
     "family_kids": {
         "examples": [
             "what activities are good for kids in mauritius",
             "is mauritius family friendly",
             "things to do with children in mauritius",
             "are there family resorts in mauritius",
+            "what can families do in mauritius",
         ],
-        "response": ("Mauritius is very family friendly: many resorts have kids' "
-                     "clubs, calm lagoons for swimming, and activities like "
-                     "glass-bottom boat trips, mini water parks, and the Ile aux "
-                     "Cerfs day trip that work well for children."),
+        "response": (
+            "Mauritius is very family friendly. Options include calm "
+            "lagoon swimming, glass-bottom boat trips, nature attractions, "
+            "wildlife experiences and family-oriented resorts."
+        ),
     },
+
+    # --------------------------------------------------------
+    # FLIGHTS
+    # --------------------------------------------------------
+
     "flights": {
         "examples": [
             "how long is the flight to mauritius",
@@ -355,12 +481,18 @@ INTENTS = {
             "is there a direct flight to mauritius",
             "how far is mauritius by plane",
         ],
-        "response": ("Flight time depends heavily on where you're departing "
-                     "from, ranging from a few hours from parts of Africa and "
-                     "Asia to 11+ hours from Europe. Air Mauritius and several "
-                     "major international carriers operate routes to Sir "
-                     "Seewoosagur Ramgoolam International Airport (MRU)."),
+        "response": (
+            "Flight time depends on the departure location. Mauritius is "
+            "served by Sir Seewoosagur Ramgoolam International Airport (MRU) "
+            "and Air Mauritius and other international airlines operate "
+            "routes to the island."
+        ),
     },
+
+    # --------------------------------------------------------
+    # AIRPORT TRANSFER
+    # --------------------------------------------------------
+
     "airport_transfer": {
         "examples": [
             "how far is the airport from the main hotels",
@@ -368,12 +500,18 @@ INTENTS = {
             "is airport transfer included with resorts",
             "how long is the drive from the airport",
         ],
-        "response": ("The airport is in the south-east of the island; drive "
-                     "times to popular resort areas range from about 20 minutes "
-                     "(south coast) to over an hour (north or west coast). Most "
-                     "hotels can arrange transfers, and taxis are readily "
-                     "available at the airport."),
+        "response": (
+            "The international airport is in the south-east of Mauritius. "
+            "Transfer times depend on your destination, with the north and "
+            "west generally taking longer than the south-east. Hotels can "
+            "usually arrange transfers and taxis are available at the airport."
+        ),
     },
+
+    # --------------------------------------------------------
+    # REGIONS
+    # --------------------------------------------------------
+
     "regions": {
         "examples": [
             "which part of mauritius should i stay in",
@@ -381,153 +519,224 @@ INTENTS = {
             "north or south mauritius for a holiday",
             "which coast is best in mauritius",
         ],
-        "response": ("The north (Grand Baie, Trou aux Biches) is lively with "
-                     "nightlife and shopping, the west (Flic en Flac) is known "
-                     "for sunsets and diving, the east (Belle Mare) is quieter "
-                     "with long beaches, and the south is wilder and less "
-                     "developed, good for nature and surfing."),
+        "response": (
+            "The north is lively and offers shopping and nightlife. The west "
+            "is popular for sunsets and beaches. The east is quieter and is "
+            "known for long beaches, while the south is more rugged and "
+            "nature-focused."
+        ),
     },
+
+    # --------------------------------------------------------
+    # NIGHTLIFE
+    # --------------------------------------------------------
+
     "nightlife": {
         "examples": [
             "what's the nightlife like in mauritius",
             "are there bars and clubs in mauritius",
             "where can i go out at night in mauritius",
         ],
-        "response": ("Nightlife is concentrated mainly around Grand Baie in the "
-                     "north, with bars, clubs, and casinos. Elsewhere on the "
-                     "island, evenings tend to be quieter, centered around hotel "
-                     "bars and restaurants."),
+        "response": (
+            "Nightlife is particularly concentrated around Grand Baie in "
+            "the north, with bars and clubs. Other parts of the island tend "
+            "to have quieter evenings centred around restaurants and hotels."
+        ),
     },
+
+    # --------------------------------------------------------
+    # SHOPPING
+    # --------------------------------------------------------
+
     "shopping": {
         "examples": [
             "where can i go shopping in mauritius",
             "best markets in mauritius",
             "what souvenirs should i buy in mauritius",
         ],
-        "response": ("Port Louis's Central Market and Caudan Waterfront are "
-                     "popular for souvenirs, textiles, and local crafts. There "
-                     "are also modern shopping malls like Bagatelle and Grand "
-                     "Baie La Croisette for a more conventional shopping trip."),
+        "response": (
+            "Port Louis Central Market and Caudan Waterfront are popular "
+            "for souvenirs, textiles and local products. Shopping malls "
+            "such as Bagatelle and Grand Baie La Croisette offer a more "
+            "modern shopping experience."
+        ),
     },
+
+    # --------------------------------------------------------
+    # DRIVING
+    # --------------------------------------------------------
+
     "driving_license": {
         "examples": [
             "can i drive with a foreign driving license in mauritius",
             "do i need an international driving permit for mauritius",
             "what's needed to rent a car in mauritius",
         ],
-        "response": ("Visitors can generally drive using a valid foreign "
-                     "driving license for a limited period (commonly around a "
-                     "year), though some rental companies ask for an "
-                     "International Driving Permit as well. Mauritius drives on "
-                     "the left."),
+        "response": (
+            "Visitors can generally drive in Mauritius using a valid foreign "
+            "driving licence subject to applicable rules. Rental companies "
+            "may have their own requirements. Mauritius drives on the left."
+        ),
     },
+
+    # --------------------------------------------------------
+    # DAY TRIPS
+    # --------------------------------------------------------
+
     "day_trips": {
         "examples": [
             "can i visit rodrigues island as a day trip",
             "day trips from mauritius",
             "can i visit other islands near mauritius",
         ],
-        "response": ("Rodrigues is a separate island about 90 minutes away by "
-                     "plane and is usually visited as a multi-day trip rather "
-                     "than a day trip. Closer options for a day out include Ile "
-                     "aux Cerfs, Ile aux Benitiers, and catamaran cruises along "
-                     "the coast."),
+        "response": (
+            "Popular day-trip options include Ile aux Cerfs, Ile aux "
+            "Benitiers and catamaran cruises. Rodrigues is usually better "
+            "suited to a multi-day visit rather than a day trip."
+        ),
     },
+
+    # --------------------------------------------------------
+    # LGBTQ
+    # --------------------------------------------------------
+
     "lgbtq": {
         "examples": [
             "is mauritius lgbtq friendly",
             "is it safe to travel to mauritius as a gay couple",
             "lgbtq travel mauritius",
         ],
-        "response": ("Attitudes in Mauritius are generally conservative, and "
-                     "public displays of affection are uncommon for any couple. "
-                     "Tourist resorts tend to be discreet and welcoming, but "
-                     "travellers should be aware local social norms are more "
-                     "conservative than in many Western countries."),
+        "response": (
+            "Tourist areas and resorts are generally welcoming, although "
+            "social attitudes can be more conservative than in some Western "
+            "destinations. Travellers should be mindful of local social norms."
+        ),
     },
+
+    # --------------------------------------------------------
+    # SOLO FEMALE
+    # --------------------------------------------------------
+
     "solo_female": {
         "examples": [
             "is mauritius safe for solo female travelers",
             "can a woman travel alone in mauritius",
             "solo female travel mauritius safety",
         ],
-        "response": ("Many women travel solo in Mauritius without major "
-                     "incident, and tourist areas are generally safe. As "
-                     "anywhere, it's sensible to avoid isolated areas at night, "
-                     "use licensed taxis, and keep an eye on drinks in bars."),
+        "response": (
+            "Many women travel solo in Mauritius. Tourist areas are generally "
+            "safe, but normal precautions are recommended, particularly "
+            "around isolated areas at night."
+        ),
     },
+
+    # --------------------------------------------------------
+    # WEDDINGS
+    # --------------------------------------------------------
+
     "weddings": {
         "examples": [
             "can foreigners get married in mauritius",
             "how do i organize a wedding in mauritius",
             "is mauritius good for destination weddings",
         ],
-        "response": ("Mauritius is a popular destination wedding location, and "
-                     "foreigners can marry there, though it involves submitting "
-                     "documents in advance and a waiting/residency period before "
-                     "the ceremony. Most resorts and wedding planners handle the "
-                     "paperwork for you."),
+        "response": (
+            "Mauritius is a popular destination-wedding location. Foreign "
+            "couples can marry there, subject to documentation and legal "
+            "requirements. Resorts and wedding planners can often assist "
+            "with the arrangements."
+        ),
     },
+
+    # --------------------------------------------------------
+    # DUTY FREE
+    # --------------------------------------------------------
+
     "duty_free": {
         "examples": [
             "what's the duty free allowance in mauritius",
             "how much alcohol can i bring into mauritius",
             "customs allowance for mauritius",
         ],
-        "response": ("Mauritius allows a personal duty-free allowance for "
-                     "items like alcohol, tobacco, and perfume within set "
-                     "limits, and requires declaration of amounts above those "
-                     "limits or of restricted goods. Check current customs "
-                     "limits before you travel, since allowances are updated "
-                     "periodically."),
+        "response": (
+            "Mauritius has duty-free allowances for items such as alcohol, "
+            "tobacco and perfume. Limits can change, so travellers should "
+            "check the latest customs guidance before travelling."
+        ),
     },
+
+    # --------------------------------------------------------
+    # TAP WATER
+    # --------------------------------------------------------
+
     "tap_water": {
         "examples": [
             "can you drink tap water in mauritius",
             "is tap water safe in mauritius",
             "should i drink bottled water in mauritius",
         ],
-        "response": ("Tap water in most tourist areas and hotels is treated and "
-                     "generally considered safe, though many visitors and "
-                     "locals prefer bottled water, especially outside main "
-                     "towns, as a precaution."),
+        "response": (
+            "Tap water is treated and generally considered safe in many "
+            "tourist areas, although some visitors prefer bottled water."
+        ),
     },
+
+    # --------------------------------------------------------
+    # INSECTS
+    # --------------------------------------------------------
+
     "insects": {
         "examples": [
             "are there mosquitoes in mauritius",
             "is dengue a risk in mauritius",
             "should i bring mosquito repellent to mauritius",
         ],
-        "response": ("Mosquitoes are present, especially in the wetter months, "
-                     "and there have occasionally been localized dengue cases. "
-                     "Repellent and covering up in the evenings are sensible "
-                     "precautions, though this isn't a major deterrent for most "
-                     "visitors."),
+        "response": (
+            "Mosquitoes are present, particularly during wetter periods. "
+            "Using insect repellent and covering exposed skin in the evening "
+            "are sensible precautions."
+        ),
     },
+
+    # --------------------------------------------------------
+    # PUBLIC HOLIDAYS
+    # --------------------------------------------------------
+
     "public_holidays": {
         "examples": [
             "what are the public holidays in mauritius",
             "is mauritius closed on public holidays",
             "when are the holidays in mauritius",
         ],
-        "response": ("Mauritius celebrates a mix of public holidays reflecting "
-                     "its multicultural population, including New Year, "
-                     "Independence Day (12 March), Diwali, Eid, Christmas, and "
-                     "others. Some shops and services may have reduced hours on "
-                     "these dates."),
+        "response": (
+            "Mauritius celebrates a range of public holidays reflecting its "
+            "multicultural population, including New Year, Independence Day, "
+            "Diwali, Eid and Christmas. Some businesses may operate reduced "
+            "hours on public holidays."
+        ),
     },
+
+    # --------------------------------------------------------
+    # ENTRY REQUIREMENTS
+    # --------------------------------------------------------
+
     "entry_requirements": {
         "examples": [
-            "are there any covid entry requirements for mauritius",
             "what are the current entry rules for mauritius",
             "do i need any health documents to enter mauritius",
+            "what documents do i need to enter mauritius",
         ],
-        "response": ("Entry health requirements change over time and by "
-                     "traveller origin, so check the latest guidance from the "
-                     "official Mauritian government or your airline shortly "
-                     "before departure rather than relying on older "
-                     "information."),
+        "response": (
+            "Entry requirements can change according to traveller nationality "
+            "and current regulations. Travellers should check the latest "
+            "official Mauritian immigration guidance before departure."
+        ),
     },
+
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
+
     "history": {
         "examples": [
             "what is the history of mauritius",
@@ -538,14 +747,18 @@ INTENTS = {
             "brief history of mauritius",
             "tell me about mauritius history",
         ],
-        "response": ("Mauritius was uninhabited until Arab and Portuguese sailors "
-                     "passed through, then settled by the Dutch in 1638 (who named "
-                     "it after Prince Maurice of Orange), abandoned in 1710, and "
-                     "colonized by the French from 1715 as Isle de France. Britain "
-                     "took control in 1810 and the island reverted to the name "
-                     "Mauritius. It gained independence on 12 March 1968 and "
-                     "became a republic within the Commonwealth in 1992."),
+        "response": (
+            "Mauritius was settled by European powers during the colonial "
+            "period, first by the Dutch and later by the French and British. "
+            "Mauritius gained independence on 12 March 1968 and became a "
+            "republic in 1992."
+        ),
     },
+
+    # --------------------------------------------------------
+    # POPULATION
+    # --------------------------------------------------------
+
     "population": {
         "examples": [
             "what is the population of mauritius",
@@ -554,12 +767,16 @@ INTENTS = {
             "population of mauritius",
             "how many people live on the island",
         ],
-        "response": ("Mauritius has a population of roughly 1.27 million people "
-                     "(2026 estimate), making it one of the more densely "
-                     "populated countries in Africa. The population is "
-                     "multi-ethnic, with Indo-Mauritian, Creole, Sino-Mauritian, "
-                     "and Franco-Mauritian communities."),
+        "response": (
+            "Mauritius has a population of around 1.3 million people and is "
+            "one of the more densely populated island countries in Africa."
+        ),
     },
+
+    # --------------------------------------------------------
+    # GEOGRAPHY
+    # --------------------------------------------------------
+
     "geography": {
         "examples": [
             "where is mauritius located",
@@ -569,13 +786,17 @@ INTENTS = {
             "geography of mauritius",
             "how far is mauritius from africa",
         ],
-        "response": ("Mauritius is a volcanic island in the Indian Ocean, about "
-                     "2,000 km off the south-east coast of Africa and roughly "
-                     "900 km east of Madagascar. It covers about 2,040 square "
-                     "kilometers and is part of the Mascarene Islands, along "
-                     "with Reunion and Rodrigues (the latter being part of the "
-                     "Republic of Mauritius)."),
+        "response": (
+            "Mauritius is a volcanic island in the Indian Ocean, around "
+            "2,000 kilometres from the south-east coast of Africa and east "
+            "of Madagascar. It forms part of the Mascarene Islands."
+        ),
     },
+
+    # --------------------------------------------------------
+    # GOVERNMENT
+    # --------------------------------------------------------
+
     "government": {
         "examples": [
             "what type of government does mauritius have",
@@ -584,12 +805,16 @@ INTENTS = {
             "is mauritius a republic",
             "what is the political system in mauritius",
         ],
-        "response": ("Mauritius is a parliamentary republic and a member of the "
-                     "Commonwealth, generally regarded as one of Africa's most "
-                     "stable democracies. It has a President as head of state "
-                     "and a Prime Minister who leads the government, with a "
-                     "National Assembly elected by voters."),
+        "response": (
+            "Mauritius is a parliamentary republic. It has a President as "
+            "head of state and a Prime Minister who leads the government."
+        ),
     },
+
+    # --------------------------------------------------------
+    # ECONOMY
+    # --------------------------------------------------------
+
     "economy": {
         "examples": [
             "what is the economy of mauritius based on",
@@ -598,12 +823,17 @@ INTENTS = {
             "is mauritius a rich country",
             "what is mauritius known for economically",
         ],
-        "response": ("Mauritius has a diversified upper-middle to high-income "
-                     "economy built on tourism, textiles and garment "
-                     "manufacturing, sugar production, financial and offshore "
-                     "services, and a growing information and communication "
-                     "technology sector."),
+        "response": (
+            "Mauritius has a diversified economy involving tourism, financial "
+            "services, textiles and manufacturing, sugar production, and "
+            "information and communication technology."
+        ),
     },
+
+    # --------------------------------------------------------
+    # CYCLONES
+    # --------------------------------------------------------
+
     "recent_cyclones": {
         "examples": [
             "when was the last cyclone in mauritius",
@@ -615,133 +845,506 @@ INTENTS = {
             "any recent cyclone warnings for mauritius",
             "how bad was the last cyclone season",
         ],
-        "response": ("Cyclone activity changes every season, so treat this as "
-                     "a snapshot rather than live information: as of mid-2026, "
-                     "Mauritius hadn't taken a direct major hit that season, "
-                     "though Intense Tropical Cyclone Dudzai passed about "
-                     "300 km southeast of the island in mid-January 2026 and "
-                     "triggered a warning for dangerous swells and coastal "
-                     "flooding risk, and a tropical depression brought "
-                     "flooding to Rodrigues in March 2026. For the current "
-                     "cyclone status and official warnings, check the "
-                     "Mauritius Meteorological Services site "
-                     "(metservice.intnet.mu) directly, especially if you're "
-                     "traveling during the cyclone season (November to May, "
-                     "peaking January to March)."),
+        "response": (
+            "Cyclone activity changes each season, so this should not be "
+            "treated as live information. For current cyclone warnings and "
+            "official weather information, travellers should check the "
+            "Mauritius Meteorological Services before travelling, especially "
+            "during cyclone season."
+        ),
     },
 }
 
-# Words that appear in almost every example regardless of topic and would
-# otherwise dominate the similarity score (this was the main bug found in
-# the evaluation: "mauritius" alone caused near-random, over-confident
-# matches). These are removed on top of the standard English stop words.
+
+# ============================================================
+# STOPWORDS
+# ============================================================
+
 DOMAIN_STOPWORDS = {
-    "mauritius", "mauritian", "mauritians", "island", "here", "there",
-    "tell", "know", "want", "explain",
+    "mauritius",
+    "mauritian",
+    "mauritians",
+    "island",
+    "here",
+    "there",
+    "tell",
+    "know",
+    "want",
+    "explain",
 }
-STOPWORDS = list(sk_text.ENGLISH_STOP_WORDS.union(DOMAIN_STOPWORDS))
 
-FALLBACK = ("I'm not fully sure about that one. I can help with topics like "
-            "visas, safety, budget, transport, accommodation, food, weather, "
-            "connectivity, and more - try rephrasing, or ask something else "
-            "about visiting Mauritius.")
+STOPWORDS = list(
+    sk_text.ENGLISH_STOP_WORDS.union(DOMAIN_STOPWORDS)
+)
 
-# A match is only trusted if its score clears MIN_SCORE *and* beats the
-# runner-up intent by at least MIN_MARGIN - a single strong, unambiguous hit,
-# not just "the least-bad of 34 options".
+
+# ============================================================
+# FALLBACK
+# ============================================================
+
+FALLBACK = (
+    "I'm not fully sure about that one. I can help with topics such as "
+    "beaches, attractions, activities, food, weather, accommodation, "
+    "transport, safety, visas, budgeting and more. You can also ask me "
+    "to create a personalised Mauritius itinerary."
+)
+
+
+# ============================================================
+# MATCHING THRESHOLDS
+# ============================================================
+
 MIN_SCORE = 0.22
 MIN_MARGIN = 0.04
 
 
+# ============================================================
+# CHATBOT CLASS
+# ============================================================
+
 class TourismChatbot:
+
     def __init__(self, intents=INTENTS):
+
         self.intents = intents
-        self.utterances, self.labels = [], []
+
+        self.utterances = []
+        self.labels = []
+
         for name, data in intents.items():
-            for ex in data["examples"]:
-                self.utterances.append(ex)
+
+            for example in data["examples"]:
+
+                self.utterances.append(example)
                 self.labels.append(name)
 
         self._stopwords = set(STOPWORDS)
-        self.vectorizer = TfidfVectorizer(analyzer=self._analyze)
-        self.matrix = self.vectorizer.fit_transform(self.utterances)
-        self.vocab = set(self.vectorizer.vocabulary_.keys())
-        # only stemmed unigrams (no spaces) are worth spell-correcting token by token
-        self._stem_vocab = sorted(w for w in self.vocab if " " not in w)
+
+        self.vectorizer = TfidfVectorizer(
+            analyzer=self._analyze
+        )
+
+        self.matrix = self.vectorizer.fit_transform(
+            self.utterances
+        )
+
+        self.vocab = set(
+            self.vectorizer.vocabulary_.keys()
+        )
+
+        self._stem_vocab = sorted(
+            word
+            for word in self.vocab
+            if " " not in word
+        )
+
+    # ========================================================
+    # TOKEN ANALYSER
+    # ========================================================
 
     def _analyze(self, doc):
-        """Tokenize -> drop stopwords -> stem -> emit unigrams AND bigrams
-        of the *surviving* stemmed tokens. Doing stopword removal and
-        stemming ourselves (rather than relying on TfidfVectorizer's
-        built-ins) keeps the vocabulary small, meaningful, and stable so
-        typo-correction and stemming can both target it."""
-        tokens = [t for t in _tokenize(doc) if t not in self._stopwords]
-        stems = [simple_stem(t) for t in tokens]
-        bigrams = [f"{a} {b}" for a, b in zip(stems, stems[1:])]
+
+        tokens = [
+            token
+            for token in _tokenize(doc)
+            if token not in self._stopwords
+        ]
+
+        stems = [
+            simple_stem(token)
+            for token in tokens
+        ]
+
+        bigrams = [
+            f"{a} {b}"
+            for a, b in zip(stems, stems[1:])
+        ]
+
         return stems + bigrams
 
+    # ========================================================
+    # TYPO CORRECTION
+    # ========================================================
+
     def _correct_typos(self, query):
-        """Best-effort fuzzy correction of each word against the fitted
-        vocabulary, so small typos ('atractions', 'curency', 'accomodation')
-        don't silently vanish as out-of-vocabulary words. Stopwords and very
-        short words are skipped - they're either discarded anyway or too
-        short for fuzzy matching to be reliable (e.g. 'at' ~ 'eat')."""
+
         words = _tokenize(query)
+
         corrected = []
-        for w in words:
-            if w in self._stopwords or len(w) < 4:
-                corrected.append(w)
+
+        for word in words:
+
+            if word in self._stopwords or len(word) < 4:
+
+                corrected.append(word)
+
                 continue
-            stem = simple_stem(w)
+
+            stem = simple_stem(word)
+
             if stem in self.vocab:
-                corrected.append(w)
+
+                corrected.append(word)
+
                 continue
-            match = difflib.get_close_matches(stem, self._stem_vocab, n=1, cutoff=0.90)
-            if match and abs(len(match[0]) - len(stem)) <= 2:
+
+            match = difflib.get_close_matches(
+                stem,
+                self._stem_vocab,
+                n=1,
+                cutoff=0.90,
+            )
+
+            if (
+                match
+                and abs(len(match[0]) - len(stem)) <= 2
+            ):
+
                 corrected.append(match[0])
+
             else:
-                corrected.append(w)
+
+                corrected.append(word)
+
         return " ".join(corrected)
 
+    # ========================================================
+    # COMPLEX QUESTION DETECTION
+    # ========================================================
+
+    def _needs_llm(self, query):
+        """
+        Identify questions that should be handled by Gemini.
+
+        These include:
+        - itinerary requests
+        - personalised recommendations
+        - trip planning
+        - multi-preference questions
+        - requests requiring reasoning across several topics
+        """
+
+        q = query.lower().strip()
+
+        # Explicit planning phrases
+        planning_phrases = [
+
+            "create a personalised itinerary",
+            "create a personalized itinerary",
+
+            "create an itinerary",
+            "make an itinerary",
+
+            "plan my trip",
+            "plan a trip",
+            "plan my holiday",
+            "plan my vacation",
+
+            "help me plan",
+            "help plan my trip",
+
+            "make me a plan",
+            "make a travel plan",
+
+            "personalised itinerary",
+            "personalized itinerary",
+
+            "personalised trip",
+            "personalized trip",
+
+            "personalised holiday",
+            "personalized holiday",
+
+            "recommend based on",
+            "recommend something for me",
+
+            "what would you recommend for me",
+
+            "suggest an itinerary",
+
+            "build an itinerary",
+            "design an itinerary",
+        ]
+
+        if any(
+            phrase in q
+            for phrase in planning_phrases
+        ):
+            return True
+
+        # Itinerary-related words
+        itinerary_words = [
+            "itinerary",
+            "trip plan",
+            "travel plan",
+            "holiday plan",
+        ]
+
+        if any(
+            phrase in q
+            for phrase in itinerary_words
+        ):
+            return True
+
+        # Multiple personal preferences
+        preference_words = [
+            "i enjoy",
+            "i like",
+            "i love",
+            "my family",
+            "with my children",
+            "with kids",
+            "with my partner",
+            "as a couple",
+            "i'm travelling",
+            "i am travelling",
+            "i'm traveling",
+            "i am traveling",
+        ]
+
+        preference_count = sum(
+            1
+            for phrase in preference_words
+            if phrase in q
+        )
+
+        # If the user describes their trip + preferences,
+        # Gemini should create the response.
+        if preference_count >= 1:
+
+            tourism_preferences = [
+                "beach",
+                "beaches",
+                "nature",
+                "food",
+                "culture",
+                "adventure",
+                "hiking",
+                "shopping",
+                "nightlife",
+                "diving",
+                "snorkelling",
+                "snorkeling",
+                "relax",
+                "relaxing",
+            ]
+
+            preference_topics = sum(
+                1
+                for word in tourism_preferences
+                if word in q
+            )
+
+            if preference_topics >= 2:
+                return True
+
+        return False
+
+    # ========================================================
+    # DEBUG / INTENT MATCHING
+    # ========================================================
+
     def respond_debug(self, query):
+
+        # ----------------------------------------------------
+        # EMPTY INPUT
+        # ----------------------------------------------------
+
+        if not query or not query.strip():
+
+            return {
+                "matched_label": None,
+                "score": 0.0,
+                "margin": 0.0,
+                "is_confident": False,
+                "response": None,
+                "ranked": [],
+                "corrected_query": query,
+                "needs_llm": False,
+            }
+
+        # ----------------------------------------------------
+        # COMPLEX / PERSONALISED REQUEST
+        # ----------------------------------------------------
+
+        if self._needs_llm(query):
+
+            return {
+                "matched_label": None,
+                "score": 0.0,
+                "margin": 0.0,
+                "is_confident": False,
+                "response": None,
+                "ranked": [],
+                "corrected_query": query,
+                "needs_llm": True,
+            }
+
+        # ----------------------------------------------------
+        # LOCAL TF-IDF MATCHING
+        # ----------------------------------------------------
+
         cleaned = self._correct_typos(query)
-        sims = cosine_similarity(self.vectorizer.transform([cleaned]), self.matrix)[0]
 
-        # aggregate to one score per intent (max over that intent's examples)
+        transformed = self.vectorizer.transform(
+            [cleaned]
+        )
+
+        sims = cosine_similarity(
+            transformed,
+            self.matrix
+        )[0]
+
+        # ----------------------------------------------------
+        # BEST SCORE PER INTENT
+        # ----------------------------------------------------
+
         best_per_label = {}
-        for label, score in zip(self.labels, sims):
-            if score > best_per_label.get(label, -1):
-                best_per_label[label] = score
-        ranked = sorted(best_per_label.items(), key=lambda kv: kv[1], reverse=True)
 
-        top_label, top_score = ranked[0]
-        runner_up_score = ranked[1][1] if len(ranked) > 1 else 0.0
-        margin = top_score - runner_up_score
-        is_confident = (top_score >= MIN_SCORE) and (margin >= MIN_MARGIN)
+        for label, score in zip(
+            self.labels,
+            sims
+        ):
+
+            if score > best_per_label.get(
+                label,
+                -1
+            ):
+
+                best_per_label[label] = score
+
+        ranked = sorted(
+            best_per_label.items(),
+            key=lambda item: item[1],
+            reverse=True,
+        )
+
+        # Safety check
+        if not ranked:
+
+            return {
+                "matched_label": None,
+                "score": 0.0,
+                "margin": 0.0,
+                "is_confident": False,
+                "response": None,
+                "ranked": [],
+                "corrected_query": cleaned,
+                "needs_llm": True,
+            }
+
+        top_label = ranked[0][0]
+        top_score = ranked[0][1]
+
+        runner_up_score = (
+            ranked[1][1]
+            if len(ranked) > 1
+            else 0.0
+        )
+
+        margin = (
+            top_score
+            - runner_up_score
+        )
+
+        is_confident = (
+            top_score >= MIN_SCORE
+            and margin >= MIN_MARGIN
+        )
 
         return {
-            "matched_label": top_label if is_confident else None,
+            "matched_label": (
+                top_label
+                if is_confident
+                else None
+            ),
+
             "score": float(top_score),
+
             "margin": float(margin),
+
             "is_confident": is_confident,
-            "response": self.intents[top_label]["response"] if is_confident else None,
-            "ranked": ranked[:3],
+
+            "response": (
+                self.intents[top_label]["response"]
+                if is_confident
+                else None
+            ),
+
+            "ranked": [
+                (label, float(score))
+                for label, score in ranked[:3]
+            ],
+
             "corrected_query": cleaned,
+
+            "needs_llm": not is_confident,
         }
 
-    def respond(self, query):
-        """Kept for backwards compatibility / offline-only use: returns the
-        static FALLBACK text when not confident, instead of deferring to an
-        LLM."""
-        dbg = self.respond_debug(query)
-        return dbg["response"] if dbg["is_confident"] else FALLBACK
+    # ========================================================
+    # OFFLINE RESPONSE
+    # ========================================================
 
+    def respond(self, query):
+
+        debug = self.respond_debug(query)
+
+        if (
+            debug["is_confident"]
+            and debug["response"]
+        ):
+
+            return debug["response"]
+
+        return FALLBACK
+
+
+# ============================================================
+# SIMPLE TERMINAL TEST
+# ============================================================
 
 if __name__ == "__main__":
+
     bot = TourismChatbot()
-    print("Mauritius Chatbot (v2, offline layer only). Type 'quit' to exit.\n")
+
+    print(
+        "\nMauritius Tourism Chatbot\n"
+        "Type 'quit' to exit.\n"
+    )
+
     while True:
-        q = input("You: ").strip()
-        if q.lower() in {"quit", "exit"}:
+
+        question = input("You: ").strip()
+
+        if question.lower() in {
+            "quit",
+            "exit",
+        }:
+
             break
-        print("Bot:", bot.respond(q), "\n")
+
+        result = bot.respond_debug(
+            question
+        )
+
+        if result["needs_llm"]:
+
+            print(
+                "Routing to Gemini / LLM fallback..."
+            )
+
+        elif result["is_confident"]:
+
+            print(
+                "Bot:",
+                result["response"]
+            )
+
+        else:
+
+            print(
+                "Bot:",
+                FALLBACK
+            )
+
+        print()
