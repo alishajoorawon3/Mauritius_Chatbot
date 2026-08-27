@@ -1,408 +1,117 @@
-import streamlit as st
+"""
+Streamlit web interface for the tourism chatbot - branded "Mauritius Chatbot".
+Deployable on Streamlit Community Cloud: needs this file, chatbot_core.py,
+llm_fallback.py, and requirements.txt in the same repo/folder.
 
+Two layers:
+  1. Offline TF-IDF intent matcher (chatbot_core.py) - instant, free,
+     answers confidently-recognised questions from a curated knowledge base
+     of 40 travel/country topics.
+  2. Gemini fallback (llm_fallback.py) - only used when layer 1 isn't
+     confident, so genuinely open-ended or novel questions still get a
+     real answer instead of "please rephrase". Requires a GEMINI_API_KEY
+     Streamlit secret; the app still works with layer 1 alone if it's absent.
+
+Conversation memory: st.session_state.ai_thread_id tracks the most recent
+Gemini interaction id so follow-up questions ("what about for families?")
+are understood in context instead of answered from a blank slate each time.
+Only AI-answered turns extend the thread - a question caught by the offline
+matcher in between doesn't get added to Gemini's memory of the conversation,
+since it never talks to Gemini at all (see llm_fallback.py's docstring).
+
+See SETUP.md for how to add the API key.
+"""
+
+import streamlit as st
 from chatbot_core import TourismChatbot, INTENTS, FALLBACK
 import llm_fallback
 
-
-# ---------------------------------------------------------
-# PAGE CONFIGURATION
-# ---------------------------------------------------------
-
-st.set_page_config(
-    page_title="Mauritius Tourism Chatbot",
-    page_icon="🏝️",
-    layout="centered",
-)
-
-
-# ---------------------------------------------------------
-# TITLE
-# ---------------------------------------------------------
-
-st.title("🏝️ Mauritius Tourism Chatbot")
-
-st.caption(
-    "Ask me about visiting Mauritius — attractions, beaches, "
-    "hotels, transport, food, activities, weather, culture, "
-    "budgets and more."
-)
-
-
-# ---------------------------------------------------------
-# SESSION STATE
-# ---------------------------------------------------------
+st.set_page_config(page_title="Mauritius Chatbot", page_icon="🏝️")
+st.title("🏝️ Mauritius Chatbot")
+st.caption("Ask me anything about visiting Mauritius - visas, safety, budget, "
+           "food, weather, honeymoons, diving, history, and more.")
 
 if "bot" not in st.session_state:
     st.session_state.bot = TourismChatbot()
-
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-
+if "history" not in st.session_state:
+    st.session_state.history = []
 if "stats" not in st.session_state:
-    st.session_state.stats = {
-        "knowledge_base": 0,
-        "ai_assistant": 0,
-        "fallback": 0,
-    }
+    st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "rate_limited": 0, "unanswered": 0}
+if "ai_thread_id" not in st.session_state:
+    st.session_state.ai_thread_id = None
 
+llm_on = llm_fallback.is_available()
 
-# ---------------------------------------------------------
-# HELPER FUNCTIONS
-# ---------------------------------------------------------
+prompt = st.chat_input("Ask me about visiting Mauritius...")
+if prompt:
+    dbg = st.session_state.bot.respond_debug(prompt)
+    if dbg["is_confident"]:
+        reply = dbg["response"]
+        source = "knowledge_base"
+    elif llm_on:
+        llm_reply, new_thread_id = llm_fallback.answer(
+            prompt, previous_interaction_id=st.session_state.ai_thread_id
+        )
+        if llm_reply == llm_fallback.RATE_LIMIT_MESSAGE:
+            reply = llm_reply
+            source = "rate_limited"
+        elif llm_reply:
+            reply = llm_reply
+            source = "ai_assistant"
+            st.session_state.ai_thread_id = new_thread_id
+        else:
+            reply = FALLBACK
+            source = "unanswered"
+    else:
+        reply = FALLBACK
+        source = "unanswered"
 
-def is_follow_up_question(question):
-    """
-    Detect whether a question is likely referring to
-    something discussed previously.
-    """
+    st.session_state.stats[source] += 1
+    st.session_state.history.append(("user", prompt, None))
+    st.session_state.history.append(("assistant", reply, source))
 
-    follow_up_words = {
-        "it",
-        "that",
-        "those",
-        "them",
-        "they",
-        "this",
-        "these",
-        "which one",
-        "what about",
-        "how about",
-        "and what",
-        "what if",
-        "how much",
-        "how many",
-        "which is better",
-        "what would you recommend",
-        "would that",
-        "is that",
-        "and for",
-        "for families",
-        "for couples",
-        "for children",
-    }
-
-    question_lower = question.lower()
-
-    return any(
-        phrase in question_lower
-        for phrase in follow_up_words
-    )
-
-
-def is_dynamic_question(question):
-    """
-    Identify questions involving information that can change.
-    """
-
-    dynamic_terms = {
-        "current",
-        "today",
-        "now",
-        "latest",
-        "recent",
-        "this week",
-        "this month",
-        "this year",
-        "exchange rate",
-        "price",
-        "prices",
-        "cost today",
-        "flight",
-        "flights",
-        "opening hours",
-        "open today",
-        "closed today",
-        "weather today",
-        "weather tomorrow",
-        "cyclone now",
-        "visa requirement",
-        "visa requirements",
-    }
-
-    question_lower = question.lower()
-
-    return any(
-        term in question_lower
-        for term in dynamic_terms
-    )
-
-
-def should_use_ai(question, debug_result):
-    """
-    Decide whether Gemini should handle the question.
-
-    Gemini is preferred when:
-    1. The question is a follow-up.
-    2. The question asks for dynamic/current information.
-    3. The TF-IDF classifier is uncertain.
-    """
-
-    if len(st.session_state.messages) > 0:
-
-        if is_follow_up_question(question):
-            return True
-
-    if is_dynamic_question(question):
-        return True
-
-    if not debug_result["is_confident"]:
-        return True
-
-    return False
-
-
-def get_conversation_history():
-    """
-    Return the stored conversation in Gemini-compatible format.
-
-    Only actual user/assistant messages are included.
-    """
-
-    history = []
-
-    for message in st.session_state.messages:
-
-        role = message["role"]
-
-        if role == "user":
-            history.append(
-                {
-                    "role": "user",
-                    "content": message["content"],
-                }
-            )
-
-        elif role == "assistant":
-            history.append(
-                {
-                    "role": "model",
-                    "content": message["content"],
-                }
-            )
-
-    return history
-
-
-# ---------------------------------------------------------
-# DISPLAY PREVIOUS CONVERSATION
-# ---------------------------------------------------------
-
-for message in st.session_state.messages:
-
-    with st.chat_message(message["role"]):
-
-        st.markdown(message["content"])
-
-        if message["role"] == "assistant":
-
-            source = message.get("source")
-
-            if source == "knowledge_base":
-
-                st.caption(
-                    "📚 Answered using the Mauritius knowledge base"
-                )
-
-            elif source == "ai_assistant":
-
-                st.caption(
-                    "🤖 Answered using the AI assistant"
-                )
-
-
-# ---------------------------------------------------------
-# SIDEBAR
-# ---------------------------------------------------------
+for role, text, source in st.session_state.history:
+    with st.chat_message(role):
+        st.write(text)
+        if source == "ai_assistant":
+            st.caption("🤖 answered by Gemini (topic outside the built-in knowledge base)")
+        elif source == "rate_limited":
+            st.caption("⏳ AI layer temporarily rate-limited - try again shortly")
 
 with st.sidebar:
-
-    st.subheader("💡 Topics")
-
-    topic_names = [
-        name.replace("_", " ").title()
-        for name in INTENTS
-    ]
-
-    for topic in topic_names:
-
-        st.write(f"• {topic}")
+    st.subheader("Try asking about:")
+    topic_names = [name.replace("_", " ").title() for name in INTENTS]
+    st.markdown(", ".join(topic_names))
+    st.caption("...plus genuinely open-ended questions, handled by an AI "
+               "fallback." if llm_on else
+               "...plus other questions, though without an AI fallback "
+               "configured, anything outside these topics gets a generic "
+               "message (see SETUP.md).")
 
     st.divider()
+    st.subheader("This session")
+    total = sum(st.session_state.stats.values())
+    if total:
+        st.metric("Answered from knowledge base", st.session_state.stats["knowledge_base"])
+        st.metric("Answered by AI fallback", st.session_state.stats["ai_assistant"])
+        st.metric("Rate-limited", st.session_state.stats["rate_limited"])
+        st.metric("Unanswered", st.session_state.stats["unanswered"])
+    else:
+        st.caption("Ask a question to see stats here.")
 
-    st.subheader("🧠 Conversation")
-
-    st.write(
-        "The chatbot remembers relevant information "
-        "from the current conversation so that follow-up "
-        "questions can be understood in context."
-    )
-
-    if st.button(
-        "🗑️ Clear conversation",
-        use_container_width=True,
-    ):
-
-        st.session_state.messages = []
-
-        st.session_state.stats = {
-            "knowledge_base": 0,
-            "ai_assistant": 0,
-            "fallback": 0,
-        }
-
+    st.divider()
+    if st.button("🔄 Start a new conversation"):
+        st.session_state.history = []
+        st.session_state.ai_thread_id = None
+        st.session_state.stats = {"knowledge_base": 0, "ai_assistant": 0, "rate_limited": 0, "unanswered": 0}
         st.rerun()
+    st.caption("Clears the chat and the AI's memory of what you've discussed "
+               "so far - use this if you want to switch topics with a clean "
+               "slate.")
 
-
-# ---------------------------------------------------------
-# CHAT INPUT
-# ---------------------------------------------------------
-
-prompt = st.chat_input(
-    "Ask me about visiting Mauritius..."
-)
-
-
-if prompt:
-
-    # -----------------------------------------------------
-    # SAVE USER MESSAGE
-    # -----------------------------------------------------
-
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": prompt,
-        }
-    )
-
-    with st.chat_message("user"):
-
-        st.markdown(prompt)
-
-
-    # -----------------------------------------------------
-    # CLASSIFY QUESTION
-    # -----------------------------------------------------
-
-    debug_result = (
-        st.session_state.bot.respond_debug(prompt)
-    )
-
-
-    # -----------------------------------------------------
-    # DECIDE WHETHER TO USE GEMINI
-    # -----------------------------------------------------
-
-    use_ai = should_use_ai(
-        prompt,
-        debug_result,
-    )
-
-
-    reply = None
-    source = None
-
-
-    # -----------------------------------------------------
-    # GEMINI
-    # -----------------------------------------------------
-
-    if use_ai and llm_fallback.is_available():
-
-        conversation_history = (
-            get_conversation_history()
-        )
-
-        # Remove the current user question because
-        # it will be sent separately to Gemini.
-        if conversation_history:
-            conversation_history = conversation_history[:-1]
-
-
-        llm_reply, success = llm_fallback.answer(
-            prompt,
-            history=conversation_history,
-        )
-
-
-        if success and llm_reply:
-
-            reply = llm_reply
-
-            source = "ai_assistant"
-
-            st.session_state.stats[
-                "ai_assistant"
-            ] += 1
-
-
-    # -----------------------------------------------------
-    # KNOWLEDGE BASE
-    # -----------------------------------------------------
-
-    if reply is None and debug_result["is_confident"]:
-
-        reply = debug_result["response"]
-
-        source = "knowledge_base"
-
-        st.session_state.stats[
-            "knowledge_base"
-        ] += 1
-
-
-    # -----------------------------------------------------
-    # FINAL FALLBACK
-    # -----------------------------------------------------
-
-    if reply is None:
-
-        reply = (
-            "I'm not completely sure about that. "
-            "I can help with Mauritius travel planning, "
-            "including accommodation, attractions, "
-            "transport, food, activities, weather, "
-            "visa information and more."
-        )
-
-        source = "fallback"
-
-        st.session_state.stats[
-            "fallback"
-        ] += 1
-
-
-    # -----------------------------------------------------
-    # SAVE ASSISTANT RESPONSE
-    # -----------------------------------------------------
-
-    st.session_state.messages.append(
-        {
-            "role": "assistant",
-            "content": reply,
-            "source": source,
-        }
-    )
-
-
-    # -----------------------------------------------------
-    # DISPLAY RESPONSE
-    # -----------------------------------------------------
-
-    with st.chat_message("assistant"):
-
-        st.markdown(reply)
-
-        if source == "knowledge_base":
-
-            st.caption(
-                "📚 Answered using the Mauritius knowledge base"
-            )
-
-        elif source == "ai_assistant":
-
-            st.caption(
-                "🤖 Answered using the AI assistant"
-            )
+    st.divider()
+    if not llm_on:
+        st.warning("AI fallback is off - no GEMINI_API_KEY configured. "
+                    "See SETUP.md to enable it.", icon="⚠️")
+    st.caption("Prototype built for a BSc dissertation on tourism analytics "
+               "and conversational AI for Mauritius.")
