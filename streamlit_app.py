@@ -5,27 +5,16 @@ Streamlit interface for the hybrid Mauritius tourism chatbot.
 
 Architecture:
 1. Local TF-IDF knowledge base
-   - Fast responses for recognised tourism topics.
 2. Gemini AI fallback
-   - Handles broader and more conversational questions.
-3. Conversation memory
-   - Maintains Gemini interaction context.
-4. Chat history
-   - Displays the complete conversation during the current session.
-
-Required files in the same GitHub repository:
-- streamlit_app.py
-- chatbot_prototype.py
-- llm_fallback.py
-- requirements.txt
-
-Required Streamlit Secret:
-- GEMINI_API_KEY
+3. Gemini conversation memory
+4. Streamlit chat history
 """
 
 import streamlit as st
 
 from chatbot_core import TourismChatbot, INTENTS, FALLBACK
+import llm_fallback
+
 
 # =========================================================
 # PAGE CONFIGURATION
@@ -39,14 +28,14 @@ st.set_page_config(
 
 
 # =========================================================
-# CUSTOM CSS
+# PAGE STYLE
 # =========================================================
 
 st.markdown(
     """
     <style>
         .main-title {
-            font-size: 2.4rem;
+            font-size: 2.3rem;
             font-weight: 700;
             margin-bottom: 0.2rem;
         }
@@ -55,19 +44,6 @@ st.markdown(
             color: #666666;
             font-size: 1rem;
             margin-bottom: 1.5rem;
-        }
-
-        .source-label {
-            font-size: 0.75rem;
-            color: #777777;
-            margin-top: 0.25rem;
-        }
-
-        .welcome-box {
-            padding: 1rem;
-            border-radius: 10px;
-            border: 1px solid #dddddd;
-            margin-bottom: 1rem;
         }
     </style>
     """,
@@ -88,8 +64,8 @@ st.markdown(
     """
     <div class="subtitle">
         Your intelligent tourism assistant for exploring Mauritius.
-        Ask about attractions, beaches, food, accommodation, transport,
-        activities, culture, weather, itineraries and more.
+        Ask about beaches, attractions, food, accommodation,
+        transport, activities, culture, itineraries and more.
     </div>
     """,
     unsafe_allow_html=True,
@@ -100,30 +76,17 @@ st.markdown(
 # SESSION STATE
 # =========================================================
 
-# Local chatbot
 if "bot" not in st.session_state:
     st.session_state.bot = TourismChatbot()
 
-
-# Conversation history shown in Streamlit
 if "history" not in st.session_state:
     st.session_state.history = []
 
-
-# Gemini conversation memory
 if "ai_thread_id" not in st.session_state:
     st.session_state.ai_thread_id = None
 
-
-# Statistics
-if "stats" not in st.session_state:
-    st.session_state.stats = {
-        "knowledge_base": 0,
-        "ai_assistant": 0,
-        "rate_limited": 0,
-        "unanswered": 0,
-        "errors": 0,
-    }
+if "pending_question" not in st.session_state:
+    st.session_state.pending_question = None
 
 
 # =========================================================
@@ -132,76 +95,60 @@ if "stats" not in st.session_state:
 
 with st.sidebar:
 
-    st.header("🌴 Mauritius Tourism")
+    st.header("🌴 Explore Mauritius")
 
     st.write(
-        "I can help you with a wide range of questions about "
-        "travelling to and exploring Mauritius."
+        "Ask questions about travelling to Mauritius, "
+        "planning your holiday and discovering the island."
     )
 
     st.divider()
 
-    st.subheader("💡 Try asking about")
+    st.subheader("💡 Suggested questions")
 
-    suggested_questions = [
+    suggestions = [
         "What are the best beaches in Mauritius?",
+        "What are the best places to visit in Mauritius?",
+        "What food should I try in Mauritius?",
         "What is the best time to visit Mauritius?",
-        "What food should I try?",
-        "How can I get around the island?",
-        "What are the best activities for families?",
-        "Can you plan a 7-day itinerary?",
-        "What are some romantic places for couples?",
-        "What can I do on a budget?",
+        "How can I get around Mauritius?",
+        "What activities are suitable for families?",
+        "Can you create a 7-day itinerary?",
+        "What can I do in Mauritius on a budget?",
     ]
 
-    for question in suggested_questions:
+    for i, question in enumerate(suggestions):
+
         if st.button(
             question,
-            key=f"suggestion_{question}",
+            key=f"suggestion_{i}",
             use_container_width=True,
         ):
             st.session_state.pending_question = question
-
+            st.rerun()
 
     st.divider()
 
-    st.subheader("📚 Built-in knowledge")
-
-    topic_names = [
-        name.replace("_", " ").title()
-        for name in INTENTS
-    ]
+    st.subheader("📚 Knowledge base")
 
     st.caption(
-        ", ".join(topic_names)
+        f"{len(INTENTS)} tourism topics available "
+        "in the local knowledge base."
     )
 
     st.divider()
 
-    st.subheader("📊 Chatbot statistics")
+    st.subheader("🧠 Conversation memory")
 
-    stats = st.session_state.stats
+    if st.session_state.ai_thread_id:
 
-    st.metric(
-        "Knowledge-base answers",
-        stats["knowledge_base"],
-    )
+        st.success("Active")
 
-    st.metric(
-        "AI-generated answers",
-        stats["ai_assistant"],
-    )
+    else:
 
-    if stats["rate_limited"] > 0:
-        st.metric(
-            "Rate-limited requests",
-            stats["rate_limited"],
-        )
-
-    if stats["unanswered"] > 0:
-        st.metric(
-            "Unanswered",
-            stats["unanswered"],
+        st.info(
+            "Memory becomes active when the AI assistant "
+            "handles a conversation."
         )
 
     st.divider()
@@ -211,39 +158,34 @@ with st.sidebar:
         use_container_width=True,
     ):
 
-        # Clear conversation memory
         st.session_state.history = []
-
-        # Reset Gemini conversation
         st.session_state.ai_thread_id = None
-
-        # Clear pending question
-        if "pending_question" in st.session_state:
-            del st.session_state.pending_question
+        st.session_state.pending_question = None
 
         st.rerun()
 
 
 # =========================================================
-# DISPLAY PREVIOUS CONVERSATION
+# DISPLAY PREVIOUS MESSAGES
 # =========================================================
 
-for item in st.session_state.history:
+for message in st.session_state.history:
 
-    role = item["role"]
-    text = item["text"]
-    source = item.get("source")
+    role = message["role"]
+    text = message["text"]
+    source = message.get("source")
 
     with st.chat_message(role):
 
         st.markdown(text)
 
-        if role == "assistant" and source:
+        if role == "assistant":
 
             if source == "knowledge_base":
 
                 st.caption(
-                    "📚 Answered using the built-in tourism knowledge base."
+                    "📚 Answered using the Mauritius "
+                    "tourism knowledge base."
                 )
 
             elif source == "ai_assistant":
@@ -252,13 +194,7 @@ for item in st.session_state.history:
                     "🤖 Answered by the AI tourism assistant."
                 )
 
-            elif source == "rate_limited":
-
-                st.caption(
-                    "⏳ AI service temporarily rate-limited."
-                )
-
-            elif source == "unanswered":
+            elif source == "fallback":
 
                 st.caption(
                     "ℹ️ General fallback response."
@@ -267,66 +203,69 @@ for item in st.session_state.history:
             elif source == "error":
 
                 st.caption(
-                    "⚠️ An error occurred while generating the response."
+                    "⚠️ An error occurred while generating "
+                    "the response."
                 )
 
 
 # =========================================================
-# GET USER QUESTION
+# GET USER INPUT
 # =========================================================
-
-pending_question = st.session_state.pop(
-    "pending_question",
-    None,
-)
 
 typed_question = st.chat_input(
     "Ask me anything about Mauritius..."
 )
 
-prompt = typed_question or pending_question
+pending_question = st.session_state.pending_question
+
+st.session_state.pending_question = None
+
+user_question = typed_question or pending_question
 
 
 # =========================================================
-# PROCESS QUESTION
+# PROCESS USER QUESTION
 # =========================================================
 
-if prompt:
+if user_question:
 
-    prompt = prompt.strip()
+    user_question = user_question.strip()
 
-    if not prompt:
+    if not user_question:
+
         st.warning("Please enter a question.")
+
         st.stop()
 
 
-    # -----------------------------------------------------
-    # Display user message immediately
-    # -----------------------------------------------------
+    # =====================================================
+    # DISPLAY USER MESSAGE
+    # =====================================================
 
     with st.chat_message("user"):
-        st.markdown(prompt)
+
+        st.markdown(user_question)
 
 
-    # -----------------------------------------------------
-    # Add user question to history
-    # -----------------------------------------------------
+    # =====================================================
+    # SAVE USER MESSAGE
+    # =====================================================
 
     st.session_state.history.append(
         {
             "role": "user",
-            "text": prompt,
+            "text": user_question,
             "source": None,
         }
     )
 
 
-    # -----------------------------------------------------
-    # Generate response
-    # -----------------------------------------------------
+    # =====================================================
+    # GENERATE RESPONSE
+    # =====================================================
 
     reply = None
-    source = "unanswered"
+    source = "fallback"
 
 
     with st.chat_message("assistant"):
@@ -335,34 +274,36 @@ if prompt:
 
             try:
 
-                # =================================================
-                # LAYER 1 — LOCAL KNOWLEDGE BASE
-                # =================================================
+                # -------------------------------------------------
+                # LAYER 1: LOCAL KNOWLEDGE BASE
+                # -------------------------------------------------
 
-                debug_result = st.session_state.bot.respond_debug(
-                    prompt
+                debug_result = (
+                    st.session_state.bot.respond_debug(
+                        user_question
+                    )
                 )
 
 
-                if debug_result["is_confident"]:
+                if debug_result.get("is_confident", False):
 
-                    reply = debug_result["response"]
+                    reply = debug_result.get(
+                        "response",
+                        FALLBACK,
+                    )
+
                     source = "knowledge_base"
 
-                    st.session_state.stats[
-                        "knowledge_base"
-                    ] += 1
 
-
-                # =================================================
-                # LAYER 2 — GEMINI AI
-                # =================================================
+                # -------------------------------------------------
+                # LAYER 2: GEMINI AI
+                # -------------------------------------------------
 
                 elif llm_fallback.is_available():
 
-                    llm_reply, new_thread_id = (
+                    ai_reply, new_thread_id = (
                         llm_fallback.answer(
-                            prompt,
+                            user_question,
                             previous_interaction_id=(
                                 st.session_state.ai_thread_id
                             ),
@@ -370,143 +311,104 @@ if prompt:
                     )
 
 
-                    # -------------------------------------------------
-                    # Rate limit
-                    # -------------------------------------------------
+                    if ai_reply:
 
-                    if (
-                        llm_reply
-                        == llm_fallback.RATE_LIMIT_MESSAGE
-                    ):
+                        reply = ai_reply
 
-                        reply = llm_reply
-                        source = "rate_limited"
-
-                        st.session_state.stats[
-                            "rate_limited"
-                        ] += 1
-
-
-                    # -------------------------------------------------
-                    # Successful AI response
-                    # -------------------------------------------------
-
-                    elif llm_reply:
-
-                        reply = llm_reply
                         source = "ai_assistant"
 
-                        # Save conversation memory
+
+                        # Save Gemini conversation memory
                         if new_thread_id:
 
                             st.session_state.ai_thread_id = (
                                 new_thread_id
                             )
 
-                        st.session_state.stats[
-                            "ai_assistant"
-                        ] += 1
-
-
-                    # -------------------------------------------------
-                    # Empty AI response
-                    # -------------------------------------------------
 
                     else:
 
                         reply = (
-                            "I'm sorry, I couldn't generate an "
-                            "answer right now. Please try "
+                            "I'm sorry, I couldn't generate "
+                            "an answer right now. Please try "
                             "rephrasing your question."
                         )
 
-                        source = "unanswered"
-
-                        st.session_state.stats[
-                            "unanswered"
-                        ] += 1
+                        source = "fallback"
 
 
-                # =================================================
-                # GEMINI NOT AVAILABLE
-                # =================================================
+                # -------------------------------------------------
+                # GEMINI UNAVAILABLE
+                # -------------------------------------------------
 
                 else:
 
                     reply = FALLBACK
-                    source = "unanswered"
 
-                    st.session_state.stats[
-                        "unanswered"
-                    ] += 1
+                    source = "fallback"
 
 
-            # -----------------------------------------------------
-            # Unexpected application error
-            # -----------------------------------------------------
+            # =====================================================
+            # ERROR HANDLING
+            # =====================================================
 
-      except Exception as exc:
+            except Exception as exc:
 
-    reply = (
-        f"⚠️ **Error:** `{type(exc).__name__}`\n\n"
-        f"`{str(exc)}`"
-    )
+                print(
+                    "[streamlit_app] ERROR:",
+                    type(exc).__name__,
+                    str(exc),
+                )
 
-    source = "error"
+                reply = (
+                    "⚠️ **An error occurred while processing "
+                    "your question.**\n\n"
+                    f"**Error type:** `{type(exc).__name__}`\n\n"
+                    f"**Details:** `{str(exc)}`"
+                )
 
-    st.session_state.stats["errors"] += 1
-
-    st.exception(exc)
+                source = "error"
 
 
-        # =========================================================
+        # =====================================================
         # DISPLAY RESPONSE
-        # =========================================================
+        # =====================================================
 
-        if reply:
-            st.markdown(reply)
+        st.markdown(reply)
 
 
-        # =========================================================
-        # SOURCE LABEL
-        # =========================================================
+        # =====================================================
+        # SOURCE INFORMATION
+        # =====================================================
 
         if source == "knowledge_base":
 
             st.caption(
-                "📚 Answered using the built-in Mauritius "
-                "tourism knowledge base."
+                "📚 Source: Mauritius tourism knowledge base"
             )
 
         elif source == "ai_assistant":
 
             st.caption(
-                "🤖 Answered by the AI tourism assistant."
+                "🤖 Source: Gemini AI tourism assistant"
             )
 
-        elif source == "rate_limited":
+        elif source == "fallback":
 
             st.caption(
-                "⏳ The AI service is temporarily rate-limited. "
-                "Please try again shortly."
+                "ℹ️ General fallback response"
             )
 
         elif source == "error":
 
             st.caption(
-                "⚠️ The chatbot encountered an unexpected error."
-            )
-
-        elif source == "unanswered":
-
-            st.caption(
-                "ℹ️ General fallback response."
+                "⚠️ Diagnostic error information displayed above"
             )
 
 
-    # -----------------------------------------------------
-    # Save assistant response to history
-    # -----------------------------------------------------
+    # =====================================================
+    # SAVE ASSISTANT RESPONSE
+    # =====================================================
 
     st.session_state.history.append(
         {
