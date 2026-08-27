@@ -55,6 +55,31 @@ def _tokenize(text_):
 # ---------------------------------------------------------------- intents
 # Each intent: a handful of natural example phrasings + one canonical answer.
 INTENTS = {
+      "beaches": {
+        "examples": [
+            "what are the best beaches in mauritius",
+            "best beaches in mauritius",
+            "which beaches should i visit",
+            "what beaches do you recommend",
+            "where are the nicest beaches",
+            "which beach is the most beautiful",
+            "best beach for swimming",
+            "best beach for families",
+            "where can i find beautiful beaches",
+            "which beaches are worth visiting",
+            "top beaches to visit",
+        ],
+        "response": (
+            "Mauritius has many beautiful beaches, each with a different "
+            "character. Trou aux Biches is popular for calm water and "
+            "snorkelling, Belle Mare is known for its long white-sand beach, "
+            "Flic en Flac is popular for sunsets and swimming, and Blue Bay "
+            "is well known for its marine environment and clear water. "
+            "For a quieter experience, consider beaches along the south "
+            "and south-east coasts."
+        ),
+    },
+  
     "best_time_to_visit": {
         "examples": [
             "when is the best time to visit mauritius",
