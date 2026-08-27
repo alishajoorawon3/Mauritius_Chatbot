@@ -1,4 +1,3 @@
-```python
 """
 Mauritius Tourism Chatbot
 -------------------------
