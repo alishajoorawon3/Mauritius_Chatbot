@@ -523,4 +523,3 @@ if prompt:
             "source": source,
         }
     )
-```
