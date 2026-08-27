@@ -445,24 +445,18 @@ if prompt:
             # Unexpected application error
             # -----------------------------------------------------
 
-            except Exception as exc:
+      except Exception as exc:
 
-                reply = (
-                    "I'm sorry, something went wrong while "
-                    "processing your question. Please try again."
-                )
+    reply = (
+        f"⚠️ **Error:** `{type(exc).__name__}`\n\n"
+        f"`{str(exc)}`"
+    )
 
-                source = "error"
+    source = "error"
 
-                st.session_state.stats[
-                    "errors"
-                ] += 1
+    st.session_state.stats["errors"] += 1
 
-                print(
-                    "[streamlit_app] Error:",
-                    type(exc).__name__,
-                    str(exc),
-                )
+    st.exception(exc)
 
 
         # =========================================================
